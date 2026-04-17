@@ -9,14 +9,20 @@ import (
 )
 
 var (
-	// 匹配: glXxx: count=X, time=Y us
-	apiLineRegex = regexp.MustCompile(`^(\w+):\s+count=(\d+),\s+time=(\d+)\s+us$`)
+	// 匹配: [     1] glXxx: count=X, time=Y us (带线程ID前缀)
+	apiLineRegex = regexp.MustCompile(`^\[\s*\d+\]\s+(\w+):\s+count=(\d+),\s+time=(\d+)\s+us$`)
 	// 匹配: swapBuffers: X us
-	swapBuffersRegex = regexp.MustCompile(`^swapBuffers:\s+(\d+)\s+us$`)
+	swapBuffersRegex = regexp.MustCompile(`^\[\s*\d+\]\s+swapBuffers:\s+(\d+)\s+us$`)
 	// 匹配: frame cost Xms
-	frameCostRegex = regexp.MustCompile(`^(\d+)\s+frame\s+cost\s+(\d+)ms$`)
+	frameCostRegex = regexp.MustCompile(`^\[\s*\d+\]\s+(\d+)\s+frame\s+cost\s+(\d+)ms$`)
 	// 匹配: libGL: FPS = X
 	fpsRegex = regexp.MustCompile(`libGL:\s+FPS\s*=\s*([\d.]+)`)
+	// 匹配: vendor 行
+	vendorRegex = regexp.MustCompile(`^vendor:`)
+	// 匹配: GC 行 <<gc = 0x...>>
+	gcRegex = regexp.MustCompile(`^<<gc = 0x[a-fA-F0-9]+>>$`)
+	// 匹配: ERROR 行 [tid:...:timestamp:ERROR:...]
+	errorRegex = regexp.MustCompile(`^\[\d+:\d+:\d+.*ERROR.*`)
 )
 
 // APIParser API日志解析器
@@ -34,6 +40,26 @@ func (p *APIParser) Parse(reader io.Reader) (*core.ParsedLog, error) {
 	for scanner.Scan() {
 		lineNum++
 		line := scanner.Text()
+
+		// 跳过空行
+		if len(line) == 0 {
+			continue
+		}
+
+		// 跳过 ERROR 行
+		if errorRegex.MatchString(line) {
+			continue
+		}
+
+		// 跳过 GC 行
+		if gcRegex.MatchString(line) {
+			continue
+		}
+
+		// 跳过 vendor 行
+		if vendorRegex.MatchString(line) {
+			continue
+		}
 
 		// 解析 FPS
 		if matches := fpsRegex.FindStringSubmatch(line); len(matches) > 1 {
