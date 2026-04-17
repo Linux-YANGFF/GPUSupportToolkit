@@ -1,0 +1,20 @@
+<<gc = 0x1800d34000>>
+glBindBuffer: count=491, time=588 us
+glBindFramebuffer: count=29, time=25377 us
+glBindTexture: count=189, time=175 us
+glBufferSubData: count=69, time=19397 us
+glClear: count=9, time=184 us
+glDrawArrays: count=21, time=1105 us
+glDrawElements: count=493, time=11214 us
+glUseProgram: count=56, time=128 us
+glVertexAttribPointer: count=584, time=205 us
+glMapBufferRange: count=6, time=37144 us
+glBindBufferRange: count=105, time=5193 us
+glBindBufferBase: count=67, time=165 us
+glFenceSync: count=1, time=5211 us
+glDrawElementsInstancedBaseVertex: count=6, time=158 us
+glProgramUniform4fv: count=403, time=206 us
+
+libGL: FPS = 8.9
+swapBuffers: 3033 us
+423 frame cost 109ms
