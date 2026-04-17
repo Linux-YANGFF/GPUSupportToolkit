@@ -1,0 +1,29 @@
+# 编译产物
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# 测试输出
+*.out
+coverage.txt
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# go
+vendor/
+*.test
+*.prof
+
+# 本地配置
+.env
+*.local.yaml
