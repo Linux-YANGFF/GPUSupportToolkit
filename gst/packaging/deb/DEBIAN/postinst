@@ -1,0 +1,13 @@
+#!/bin/bash
+case "$1" in
+    configure)
+        # 创建数据目录
+        mkdir -p /var/lib/gst
+        chmod 755 /var/lib/gst
+        # 更新桌面数据库
+        if command -v update-desktop-database &> /dev/null; then
+            update-desktop-database /usr/share/applications 2>/dev/null || true
+        fi
+        ;;
+esac
+exit 0

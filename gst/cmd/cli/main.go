@@ -43,13 +43,13 @@ func main() {
 	}
 
 	// 关键字检索
-	if *searchCmd != "" {
-		searchKeyword(*searchCmd)
+	if *searchCmd != "" && *parseCmd != "" {
+		searchKeyword(*parseCmd, *searchCmd)
 	}
 
 	// 时间段检索
-	if *timeRange != "" {
-		searchTimeRange(*timeRange)
+	if *timeRange != "" && *parseCmd != "" {
+		searchTimeRange(*parseCmd, *timeRange)
 	}
 
 	// 帧分析
@@ -114,17 +114,11 @@ func parseLog(filePath string) {
 		fmt.Printf("错误: 无法打开文件: %v\n", err)
 		return
 	}
-	defer file.Close()
 
-	// 检测日志类型
-	scanner := bufio.NewScanner(file)
-	var firstLine string
-	if scanner.Scan() {
-		firstLine = scanner.Text()
-	}
+	// 使用改进的检测函数扫描前100行找到第一个有效行
+	kind := parser.DetectKindFromReader(file, 100)
 	file.Close()
 
-	kind := parser.DetectKind(firstLine)
 	fmt.Printf("检测类型: %s\n", kind)
 
 	// 重新打开文件解析
@@ -148,14 +142,14 @@ func parseLog(filePath string) {
 	fmt.Println()
 }
 
-func searchKeyword(filePath string) {
-	if *searchCmd == "" {
+func searchKeyword(filePath string, keyword string) {
+	if keyword == "" {
 		fmt.Println("错误: -search 需要指定关键字")
 		return
 	}
 
-	keywords := strings.Split(*searchCmd, " ")
-	fmt.Printf("=== 关键字检索: %s ===\n\n", *searchCmd)
+	keywords := strings.Split(keyword, " ")
+	fmt.Printf("=== 关键字检索: %s ===\n\n", keyword)
 
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -185,8 +179,8 @@ func searchKeyword(filePath string) {
 	fmt.Println()
 }
 
-func searchTimeRange(filePath string) {
-	parts := strings.Split(*timeRange, ",")
+func searchTimeRange(filePath string, timeRangeStr string) {
+	parts := strings.Split(timeRangeStr, ",")
 	if len(parts) != 2 {
 		fmt.Println("错误: -time 格式应为 startUs,endUs (如: 1000,50000)")
 		return

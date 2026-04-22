@@ -1,0 +1,13 @@
+#!/bin/bash
+case "$1" in
+    remove|deconfigure)
+        # 停止 gst-server 服务
+        if [ -f /var/run/gst-server.pid ]; then
+            kill $(cat /var/run/gst-server.pid) 2>/dev/null || true
+            rm -f /var/run/gst-server.pid
+        fi
+        # 强制停止所有 gst-server 进程
+        pkill -f /usr/bin/gst-server 2>/dev/null || true
+        ;;
+esac
+exit 0

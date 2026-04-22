@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=GST
+Comment=GPU Support Toolkit - Log Analysis
+Exec=/usr/bin/gst-server --port 8080 --browser --web-dir /usr/share/gst/web
+Icon=gst
+Terminal=false
+Type=Application
+Categories=Utility;Development;

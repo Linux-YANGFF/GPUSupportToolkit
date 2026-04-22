@@ -15,21 +15,21 @@ var (
 // ShaderAnalyzer Shader分析器
 type ShaderAnalyzer struct {
 	log     *core.ParsedLog
-	shaders map[string]*core.ShaderInfo
+	shaders map[string]*core.ShaderCompileInfo
 }
 
 // NewShaderAnalyzer 创建Shader分析器
 func NewShaderAnalyzer(log *core.ParsedLog) *ShaderAnalyzer {
-	return &ShaderAnalyzer{log: log, shaders: make(map[string]*core.ShaderInfo)}
+	return &ShaderAnalyzer{log: log, shaders: make(map[string]*core.ShaderCompileInfo)}
 }
 
 // Analyze 分析Shader使用情况
-func (sa *ShaderAnalyzer) Analyze() []core.ShaderInfo {
+func (sa *ShaderAnalyzer) Analyze() []core.ShaderCompileInfo {
 	if sa.log == nil {
 		return nil
 	}
 
-	sa.shaders = make(map[string]*core.ShaderInfo)
+	sa.shaders = make(map[string]*core.ShaderCompileInfo)
 
 	// 遍历所有帧
 	for _, frame := range sa.log.Frames {
@@ -45,7 +45,7 @@ func (sa *ShaderAnalyzer) Analyze() []core.ShaderInfo {
 		}
 	}
 
-	results := make([]core.ShaderInfo, 0, len(sa.shaders))
+	results := make([]core.ShaderCompileInfo, 0, len(sa.shaders))
 	for _, info := range sa.shaders {
 		results = append(results, *info)
 	}
@@ -63,7 +63,7 @@ func (sa *ShaderAnalyzer) incShaderStat(shaderType string, timeUs int64) {
 		info.CompileCount++
 		info.TotalCompileTimeUs += timeUs
 	} else {
-		sa.shaders[key] = &core.ShaderInfo{
+		sa.shaders[key] = &core.ShaderCompileInfo{
 			Type:               shaderType,
 			CompileCount:       1,
 			TotalCompileTimeUs: timeUs,

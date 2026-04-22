@@ -1,0 +1,9 @@
+Package: gst
+Version: 1.0.0
+Section: utils
+Priority: optional
+Architecture: amd64
+Depends: libc6, libgl1, libx11-6
+Maintainer: GST Team
+Description: GPU Support Toolkit - GPU log analysis tool
+ A tool for analyzing apitrace and profile logs.

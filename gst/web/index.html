@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GST - GPU Support Toolkit</title>
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect fill='%231677ff' width='100' height='100' rx='20'/><text y='.9em' x='50%' text-anchor='middle' font-size='70'>⚡</text></svg>">
+</head>
+<body>
+  <nav class="topbar">
+    <div class="topbar-inner">
+      <a href="index.html" class="logo">
+        <div class="logo-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+          </svg>
+        </div>
+        <span class="logo-text"><span class="brand">GST</span> GPU Support Toolkit</span>
+      </a>
+      <span class="topbar-meta">v1.0</span>
+    </div>
+  </nav>
+
+  <main class="page-wrapper">
+    <section class="hero">
+      <div class="hero-badge">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+        </svg>
+        GPU 日志分析工具
+      </div>
+      <h1><span class="brand">GST</span> GPU Support Toolkit</h1>
+      <p>轻量、快速的 GPU 日志解析与性能分析工具，支持 apitrace / profile 日志，帮助你深入理解帧渲染开销。</p>
+    </section>
+
+    <div class="features-grid">
+      <!-- Log Analysis Card - Single entry point -->
+      <a href="logs.html" class="feature-card">
+        <span class="card-badge available">可用</span>
+        <div class="card-icon-wrap blue">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="16" y1="13" x2="8" y2="13"/>
+            <line x1="16" y1="17" x2="8" y2="17"/>
+            <polyline points="10 9 9 9 8 9"/>
+          </svg>
+        </div>
+        <h3>日志分析</h3>
+        <p>上传或指定路径，解析日志文件。按帧展示耗时、API 调用序列，支持关键字搜索、Top N 帧分析、Shader 统计与导出报告。</p>
+        <div class="card-arrow">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="5" y1="12" x2="19" y2="12"/>
+            <polyline points="12 5 19 12 12 19"/>
+          </svg>
+        </div>
+      </a>
+    </div>
+  </main>
+</body>
+</html>

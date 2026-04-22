@@ -72,7 +72,7 @@ func TestCSVExporter_Export_FuncStats(t *testing.T) {
 }
 
 func TestCSVExporter_Export_ShaderInfo(t *testing.T) {
-	infos := []core.ShaderInfo{
+	infos := []core.ShaderCompileInfo{
 		{Type: "Vertex", CompileCount: 10, TotalCompileTimeUs: 50000},
 	}
 
@@ -209,7 +209,7 @@ func TestExportFuncStats(t *testing.T) {
 }
 
 func TestExportShaderStats(t *testing.T) {
-	infos := []core.ShaderInfo{
+	infos := []core.ShaderCompileInfo{
 		{Type: "Vertex", CompileCount: 10, TotalCompileTimeUs: 50000},
 	}
 

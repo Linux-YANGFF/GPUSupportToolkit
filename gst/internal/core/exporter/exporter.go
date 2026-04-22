@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 	"gst/internal/core"
 )
 
@@ -84,7 +85,7 @@ func (e CSVExporter) Export(w io.Writer) error {
 				return err
 			}
 		}
-	case []core.ShaderInfo:
+	case []core.ShaderCompileInfo:
 		if err := csvWriter.Write([]string{"Type", "CompileCount", "TotalCompileTimeUs"}); err != nil {
 			return err
 		}
@@ -96,6 +97,34 @@ func (e CSVExporter) Export(w io.Writer) error {
 			}); err != nil {
 				return err
 			}
+		}
+	case []*core.ShaderInfo:
+		if err := csvWriter.Write([]string{"ID", "Source"}); err != nil {
+			return err
+		}
+		for _, s := range v {
+			if err := csvWriter.Write([]string{
+				fmt.Sprintf("%d", s.ID),
+				s.Source,
+			}); err != nil {
+				return err
+			}
+		}
+	case core.FrameInfo:
+		if err := csvWriter.Write([]string{"FrameNum", "StartLine", "EndLine", "TotalTimeUs", "SwapBufferTimeUs", "APITotalTimeUs", "APICallCount"}); err != nil {
+			return err
+		}
+		f := v
+		if err := csvWriter.Write([]string{
+			fmt.Sprintf("%d", f.FrameNum),
+			fmt.Sprintf("%d", f.StartLine),
+			fmt.Sprintf("%d", f.EndLine),
+			fmt.Sprintf("%d", f.TotalTimeUs),
+			fmt.Sprintf("%d", f.SwapBufferTimeUs),
+			fmt.Sprintf("%d", f.APITotalTimeUs),
+			fmt.Sprintf("%d", len(f.APICalls)),
+		}); err != nil {
+			return err
 		}
 	default:
 		return fmt.Errorf("unsupported data type for CSV export")
@@ -214,7 +243,7 @@ func exportFuncStatsTxt(stats []core.FuncStats, w io.Writer) error {
 }
 
 // ExportShaderStats 导出Shader统计
-func ExportShaderStats(infos []core.ShaderInfo, format string, w io.Writer) error {
+func ExportShaderStats(infos []core.ShaderCompileInfo, format string, w io.Writer) error {
 	switch format {
 	case "txt":
 		return exportShaderStatsTxt(infos, w)
@@ -228,7 +257,7 @@ func ExportShaderStats(infos []core.ShaderInfo, format string, w io.Writer) erro
 }
 
 // exportShaderStatsTxt 以TXT格式导出Shader统计
-func exportShaderStatsTxt(infos []core.ShaderInfo, w io.Writer) error {
+func exportShaderStatsTxt(infos []core.ShaderCompileInfo, w io.Writer) error {
 	if _, err := fmt.Fprintf(w, "%-20s %15s %20s\n", "Type", "CompileCount", "TotalCompileTime(us)"); err != nil {
 		return err
 	}
@@ -237,6 +266,49 @@ func exportShaderStatsTxt(infos []core.ShaderInfo, w io.Writer) error {
 	}
 	for _, s := range infos {
 		if _, err := fmt.Fprintf(w, "%-20s %15d %20d\n", s.Type, s.CompileCount, s.TotalCompileTimeUs); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ExportAnalysisResult 导出分析结果（支持多种数据类型的统一 TXT 导出）
+func ExportAnalysisResult(data interface{}, format string, w io.Writer) error {
+	if format != "txt" {
+		return fmt.Errorf("ExportAnalysisResult only supports txt format")
+	}
+
+	switch v := data.(type) {
+	case []core.FrameInfo:
+		return exportFrameDetailTxt(v, w)
+	case core.FrameInfo:
+		return exportFrameDetailTxt([]core.FrameInfo{v}, w)
+	case []core.FuncStats:
+		return exportFuncStatsTxt(v, w)
+	case []*core.ShaderInfo:
+		return exportShaderInfoTxt(v, w)
+	case []core.SearchResult:
+		return TXTExporter{Results: v}.Export(w)
+	default:
+		return fmt.Errorf("unsupported data type for analysis result export")
+	}
+}
+
+// exportShaderInfoTxt 以TXT格式导出Shader源码列表
+func exportShaderInfoTxt(shaders []*core.ShaderInfo, w io.Writer) error {
+	for i, s := range shaders {
+		if i > 0 {
+			if _, err := fmt.Fprintf(w, "\n%s\n\n", strings.Repeat("=", 50)); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintf(w, "Shader ID: %d\n", s.ID); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(w, "%s\n", strings.Repeat("-", 50)); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(w, "%s\n", s.Source); err != nil {
 			return err
 		}
 	}

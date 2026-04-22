@@ -15,6 +15,10 @@ func TestDetectKind(t *testing.T) {
 		{"empty line", "", KindUnknown},
 		{"profile format", "<<gc = 0x1800d34000>>", KindProfile},
 		{"api trace format", "glBindBuffer: count=491, time=588 us", KindAPITrace},
+		{"raw trace format - glXSwapBuffers", "glXSwapBuffers: dpy = 0x1c002a1400, drawable = 121634855", KindRawTrace},
+		{"raw trace format - glGenFramebuffers", "glGenFramebuffers 1", KindRawTrace},
+		{"raw trace format - glBindBuffer", "glBindBuffer 0x8892 498", KindRawTrace},
+		{"raw trace format - glDrawElements", "glDrawElements 0x0004 2304 0x1403 (nil)", KindRawTrace},
 		{"unknown format", "some random text", KindUnknown},
 	}
 
@@ -35,6 +39,7 @@ func TestCreateParser(t *testing.T) {
 	}{
 		{KindAPITrace, "*parser.APIParser"},
 		{KindProfile, "*parser.ProfileParser"},
+		{KindRawTrace, "*parser.RawTraceParser"},
 		{KindUnknown, "*parser.APIParser"},
 	}
 
@@ -138,5 +143,87 @@ func TestIsFrameBoundary(t *testing.T) {
 				t.Errorf("isFrameBoundary(%q) = %v, want %v", tt.line, result, tt.expected)
 			}
 		})
+	}
+}
+
+func TestRawTraceParser_Parse(t *testing.T) {
+	input := `glXSwapBuffers: dpy = 0x1c002a1400, drawable = 121634855
+glGenFramebuffers 1
+glBindBuffer 0x8892 498
+glBufferSubData 0x8892 0 8512 0x7fa1ba6970
+glUseProgram 18
+glDrawElements 0x0004 2304 0x1403 (nil)
+glXSwapBuffers: dpy = 0x1c002a1400, drawable = 121634855
+glGenFramebuffers 1
+glBindBuffer 0x8892 500
+glUseProgram 22
+glDrawArrays 0x0005 0 4`
+
+	parser := NewRawTraceParser()
+	parsed, err := parser.Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	// Should have 2 frames
+	if len(parsed.Frames) != 2 {
+		t.Errorf("Expected 2 frames, got %d", len(parsed.Frames))
+	}
+
+	// First frame should have 5 API calls
+	if len(parsed.Frames) > 0 {
+		frame1 := parsed.Frames[0]
+		if len(frame1.APICalls) != 5 {
+			t.Errorf("Expected 5 API calls in frame 1, got %d", len(frame1.APICalls))
+		}
+		// Check glUseProgram captured program ID 18
+		if len(frame1.Programs) != 1 || frame1.Programs[0] != 18 {
+			t.Errorf("Expected program 18 in frame 1, got %v", frame1.Programs)
+		}
+	}
+
+	// Second frame should have 4 API calls
+	if len(parsed.Frames) > 1 {
+		frame2 := parsed.Frames[1]
+		if len(frame2.APICalls) != 4 {
+			t.Errorf("Expected 4 API calls in frame 2, got %d", len(frame2.APICalls))
+		}
+		// Check glUseProgram captured program ID 22
+		if len(frame2.Programs) != 1 || frame2.Programs[0] != 22 {
+			t.Errorf("Expected program 22 in frame 2, got %v", frame2.Programs)
+		}
+	}
+}
+
+func TestRawTraceParser_ParseFromFile(t *testing.T) {
+	file, err := os.Open("/root/code/GPUSupportToolkit/GPUSupportToolkit/exmple_log/1frame_demo_api.txt")
+	if err != nil {
+		t.Skipf("Skipping file test: %v", err)
+	}
+	defer file.Close()
+
+	parser := NewRawTraceParser()
+	parsed, err := parser.Parse(file)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	// The sample file has multiple frames
+	if len(parsed.Frames) == 0 {
+		t.Error("Expected at least 1 frame")
+	}
+
+	// Check that programs were captured
+	for i, frame := range parsed.Frames {
+		if len(frame.Programs) > 0 {
+			t.Logf("Frame %d has %d programs: %v", i, len(frame.Programs), frame.Programs)
+		}
+	}
+}
+
+func TestRawTraceParser_Kind(t *testing.T) {
+	parser := NewRawTraceParser()
+	if parser.Kind() != KindRawTrace {
+		t.Errorf("Expected KindRawTrace, got %v", parser.Kind())
 	}
 }
