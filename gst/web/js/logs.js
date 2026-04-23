@@ -58,11 +58,7 @@ createApp({
     // Export
     const exportFormat = ref('json');
     const exporting = ref(false);
-    const exportOptions = ref({
-      longestFrame: true,
-      top20Frames: true,
-      shaderLogs: true
-    });
+    const exportType = ref('frames');
 
     // Toast
     const toast = ref(null);
@@ -316,6 +312,9 @@ createApp({
         modalFrameDetail.value = {
           ...data,
           duration_us: data.TotalTimeUs,
+          duration_ms: data.TotalTimeUs != null ? data.TotalTimeUs / 1000 : null,
+          swapbuffers_ms: (data.SwapBufferTimeUs ?? data.SwapBuffersTimeUs) != null ? (data.SwapBufferTimeUs ?? data.SwapBuffersTimeUs) / 1000 : null,
+          api_ms: (data.APITotalTimeUs ?? data.APITimeUs) != null ? (data.APITotalTimeUs ?? data.APITimeUs) / 1000 : null,
           api_count: data.APICalls ? data.APICalls.length : 0,
           api_calls: Object.entries(data.APISummary || {}).map(([name, stats]) => ({
             name: name,
@@ -493,7 +492,7 @@ createApp({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             format: exportFormat.value,
-            options: exportOptions.value
+            type: exportType.value
           })
         });
         if (!res.ok) throw new Error(`导出失败: ${res.status}`);
@@ -557,7 +556,7 @@ createApp({
       searchKeyword, searchResults, searching, searched,
       searchCurrentPage, searchPageSize, searchTotalPages, paginatedSearchResults, searchPageRange,
       topN, topFrames, shaderStats, selectedTopFrame, selectedTopFrameFuncStats,
-      exportFormat, exporting, exportOptions,
+      exportFormat, exporting, exportType,
       toast, stopping,
       browseFile, parseFile, loadFrames, goPage, selectFrame,
       openFrameModal, closeFrameModal,

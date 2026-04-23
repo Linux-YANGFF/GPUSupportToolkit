@@ -186,7 +186,7 @@ func (h *Handler) GetFrames(w http.ResponseWriter, r *http.Request) {
 }
 
 // R3: GetFrameDetail handles GET /api/log/frames/:id
-// Returns frame summary only (no APICalls/APISummary/Shaders to avoid large payloads)
+// Returns full frame info including APICalls and APISummary
 func (h *Handler) GetFrameDetail(w http.ResponseWriter, r *http.Request) {
 	h.mu.RLock()
 	current := h.current
@@ -207,16 +207,8 @@ func (h *Handler) GetFrameDetail(w http.ResponseWriter, r *http.Request) {
 
 	for _, frame := range current.Frames {
 		if frame.FrameNum == id {
-			summary := FrameSummary{
-				FrameNum:         frame.FrameNum,
-				StartLine:        frame.StartLine,
-				EndLine:          frame.EndLine,
-				TotalTimeUs:      frame.TotalTimeUs,
-				SwapBufferTimeUs: frame.SwapBufferTimeUs,
-				APITotalTimeUs:   frame.APITotalTimeUs,
-			}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(summary)
+			json.NewEncoder(w).Encode(frame)
 			return
 		}
 	}
@@ -599,13 +591,12 @@ type ShadersResponse struct {
 
 // ParseResult is the API response format for parse
 type ParseResult struct {
-	Format         string       `json:"format"`
-	FrameCount     int          `json:"frame_count"`
-	FPS            float64      `json:"fps"`
-	FirstFrameTime float64      `json:"first_frame_time"`
-	LastFrameTime  float64      `json:"last_frame_time"`
-	TotalTimeUs    int64        `json:"total_time_us"`
-	Frames         interface{}  `json:"frames"`
+	Format         string      `json:"format"`
+	FrameCount     int         `json:"frame_count"`
+	FPS            float64     `json:"fps"`
+	MaxFrameTime   float64     `json:"max_frame_time"`
+	TotalTimeUs    int64       `json:"total_time_us"`
+	Frames         interface{} `json:"frames"`
 }
 
 // toParseResult converts core.ParsedLog to API ParseResult
@@ -619,8 +610,14 @@ func toParseResult(p *core.ParsedLog) *ParseResult {
 		Frames:         nil, // Frames not included in parse result - use /api/log/frames
 	}
 	if len(p.Frames) > 0 {
-		result.FirstFrameTime = float64(p.Frames[0].TotalTimeUs) / 1000.0
-		result.LastFrameTime = float64(p.Frames[len(p.Frames)-1].TotalTimeUs) / 1000.0
+		// Find frame with highest TotalTimeUs
+		maxTime := p.Frames[0].TotalTimeUs
+		for _, frame := range p.Frames {
+			if frame.TotalTimeUs > maxTime {
+				maxTime = frame.TotalTimeUs
+			}
+		}
+		result.MaxFrameTime = float64(maxTime) / 1000.0
 	}
 	if p.FPS > 0 {
 		result.Format = "profile"

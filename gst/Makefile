@@ -229,6 +229,26 @@ deb: build-server build-cli
 	cd bin/deb && dpkg-deb --build . ../gst-$(VERSION)-$(ARCH).deb
 	@echo "Deb package built: bin/gst-$(VERSION)-$(ARCH).deb"
 
+# ARM64 deb package
+deb-arm64:
+	@echo "Cross-compiling for Linux arm64..."
+	@mkdir -p bin
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GOBUILD) -o bin/gst-server-linux-arm64 $(SERVER_CMD)
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GOBUILD) -o bin/gst-cli-linux-arm64 $(CLI_CMD)
+	@echo "Building ARM64 deb package..."
+	@mkdir -p bin/deb-arm64/usr/bin
+	@mkdir -p bin/deb-arm64/DEBIAN
+	@mkdir -p "bin/deb-arm64/usr/share/applications"
+	@mkdir -p "bin/deb-arm64/usr/share/gst/web"
+	cp bin/gst-server-linux-arm64 bin/deb-arm64/usr/bin/gst-server
+	cp bin/gst-cli-linux-arm64 bin/deb-arm64/usr/bin/gst
+	cp -r web/* bin/deb-arm64/usr/share/gst/web/
+	cp packaging/deb/DEBIAN/* bin/deb-arm64/DEBIAN/
+	cp packaging/deb/usr/share/applications/* bin/deb-arm64/usr/share/applications/
+	chmod 755 bin/deb-arm64/DEBIAN/postinst bin/deb-arm64/DEBIAN/prerm
+	cd bin/deb-arm64 && dpkg-deb --build . ../gst-$(VERSION)-arm64.deb
+	@echo "ARM64 deb package built: bin/gst-$(VERSION)-arm64.deb"
+
 # Legacy rpm target (uses rpmbuild)
 rpm: build-server
 	@echo "Building rpm package..."
