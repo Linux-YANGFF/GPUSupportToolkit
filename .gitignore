@@ -22,5 +22,8 @@ exmple_log/
 .remember/
 
 # Local assistant/runtime scratch directories
+.planning/
+.sisyphus/
+**/.sisyphus/
 .codex/
 .agents/
