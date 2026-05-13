@@ -1,0 +1,60 @@
+TASK 5: Dead Code Removal & Magic Numbers Extraction
+=====================================================
+Date: 2026-05-09
+Go version: go1.18.1 linux/amd64
+
+=== DEAD CODE REMOVED ===
+
+1. cmd/cli/main.go: timeit() function (2 copies - lines 364-369 and 396-401)
+   - Not called anywhere in codebase (grep confirmed zero call sites)
+   - Removed unused "time" import after deletion
+
+2. internal/platform/file_reader.go: convertLine() method
+   - Only called at one location (ReadLinesWithProgress, line 123)
+   - Method body was simply: return string(line)
+   - Inlined to: text := string(line)
+   - encoding variable was unused after, changed to blank identifier
+
+3. internal/core/analyzer/buffer_analyzer.go: BufferUsageHint + BufferUsagePattern maps
+   - Both maps defined but never referenced by any function
+   - Zero external references (grep confirmed only in definition file)
+   - 21 lines of dead data removed
+
+=== MAGIC NUMBERS EXTRACTED ===
+
+Go constants added:
+
+  internal/platform/file_reader.go:
+    StreamBufferSize = 64 * 1024 * 1024  (replaced 2 uses)
+
+  internal/core/parser/parser.go:
+    DefaultBufferSize = 10 * 1024 * 1024  (replaced 1 use in parser.go)
+    - Also reused in api_parser.go (2 uses) and raw_trace_parser.go (2 uses)
+
+  cmd/gst-server/internal/handlers/handlers.go:
+    DefaultBufferSize       = 10 * 1024 * 1024  (replaced 2 uses)
+    MaxMultipartSize        = 100 << 20          (replaced 1 use)
+    ShaderSourceTruncateLen = 2000               (replaced 2 uses)
+
+JavaScript constants added:
+
+  web/js/logs.js:
+    FETCH_TIMEOUT = 120000  (replaced setTimeout abort delay)
+    TOAST_TIMEOUT = 5000   (replaced toast display duration)
+
+=== NOT FOUND (no action taken) ===
+
+- Threshold values > 5 or > 3 in analyzer files: none found in business logic context
+- No other magic numbers matching the specified patterns
+
+=== VERIFICATION ===
+
+  go build ./...         : PASS (0 errors)
+  go vet ./...           : PASS (only pre-existing fmt.Println warnings)
+  go test ./internal/core/...  : PASS (27/27 tests)
+    - analyzer: 11/11
+    - exporter: 11/11
+    - parser:   9/9
+    - search:   5/5
+
+All changes verified: no regressions, no numeric value alterations.

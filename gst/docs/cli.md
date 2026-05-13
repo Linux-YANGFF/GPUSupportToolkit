@@ -34,8 +34,10 @@ gst-cli [options] -parse <file>
 | `-top <N>` | Show top N slowest frames (default: 10) |
 | `-funcs` | Show function call statistics |
 | `-shader` | Show shader compilation statistics |
+| `-diagnose` | Run bug diagnosis engine (7 analyzers) on log file |
 | `-export <format>` | Export results (txt, csv, or json) |
 | `-output <file>` | Output file path (default: stdout) |
+| `-verbose` | Enable verbose logging |
 | `-help` | Show help information |
 
 ## Commands
@@ -116,6 +118,37 @@ gst-cli -shader -parse /path/to/log.trace
 
 Output includes compile count and total compile time per shader type.
 
+### Bug Diagnosis
+
+Run the bug diagnosis engine to detect common GPU programming issues:
+
+```bash
+gst-cli -diagnose -parse /path/to/log.trace
+```
+
+The diagnosis engine runs 7 analyzers:
+
+| Analyzer | Description |
+|:----|:------------|
+| Null Pointer Detector | Detects `ptr=(nil)` without prior VBO binding |
+| Resource Leak Detector | Detects unpaired `glGen*` / `glDelete*` calls |
+| Shader Error Detector | Detects missing compile/link status checks |
+| API Anti-Pattern Detector | Detects redundant state changes, invalid bindings, per-frame resource rebuilds |
+| Performance Anomaly Detector | Detects frame time spikes (>2σ deviation) and API call anomalies |
+| Thread Safety Detector | Detects multiple threads operating on same GL context |
+| Driver Error Detector | Correlates `__glSetError` codes with triggering API calls |
+
+Output is a structured Markdown report including:
+- Summary of issues by severity (Critical/High/Medium/Low/Info)
+- Detailed findings with evidence (log line numbers), root cause chain, and fix suggestions
+
+Combine with other flags for comprehensive analysis:
+
+```bash
+# Diagnose with verbose logging
+gst-cli -diagnose -verbose -parse /path/to/log.trace
+```
+
 ### Export Results
 
 Export parsed data in various formats:
@@ -139,6 +172,9 @@ gst-cli -top 20 -funcs -parse /path/to/log.trace
 
 # Search while parsing
 gst-cli -search "glShaderSource" -parse /path/to/log.trace
+
+# Bug diagnosis with top frames
+gst-cli -diagnose -top 20 -parse /path/to/log.trace
 
 # Export with custom output
 gst-cli -export json -output analysis.json -top 50 -parse /path/to/log.trace

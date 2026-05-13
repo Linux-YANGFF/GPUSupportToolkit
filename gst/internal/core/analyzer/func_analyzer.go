@@ -56,6 +56,33 @@ func (fa *FuncAnalyzer) Analyze() []core.FuncStats {
 	return results
 }
 
+// GetFuncSummary 获取函数统计摘要
+func (fa *FuncAnalyzer) GetFuncSummary() *core.FuncSummary {
+	stats := fa.Analyze()
+	if stats == nil {
+		return nil
+	}
+
+	var totalCalls int
+	var totalTime int64
+	topN := 10
+	if len(stats) < topN {
+		topN = len(stats)
+	}
+
+	for _, s := range stats {
+		totalCalls += s.CallCount
+		totalTime += s.TotalTimeUs
+	}
+
+	return &core.FuncSummary{
+		TotalFunctions: len(stats),
+		TotalCalls:     totalCalls,
+		TotalTimeUs:    totalTime,
+		TopFunctions:   stats[:topN],
+	}
+}
+
 // FilterByPrefix 按前缀过滤函数
 func (fa *FuncAnalyzer) FilterByPrefix(prefix string) []core.FuncStats {
 	all := fa.Analyze()

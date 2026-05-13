@@ -1,63 +1,42 @@
 # GST 项目工作指南
 
-## 项目概述
+GST (GPU Support Toolkit) — GPU 日志分析工具，将 GB 级 apitrace 日志结构化，服务于 AI agent 和 FAE/研发。
 
-GST (GPU Support Toolkit) 是一个基于 Go + Fyne 的 GPU 日志分析工具，用于解析和分析 apitrace/profile 日志。
+**主目录**: `gst/`
 
-**主目录**: `/root/code/GPUSupportToolkit/GPUSupportToolkit/gst`
+## 项目文档
+
+所有项目文档在 `docs/` 目录：
+- `docs/ai-context/README.md` — 新 Codex/AI 会话优先读取入口
+- `docs/OVERVIEW.md` — 项目功能、已实现/未实现需求、技术栈
+- `docs/ARCHITECTURE.md` — 架构、目录结构、API 端点、数据模型
+- `docs/TESTING.md` — 测试日志、验证标准
 
 ## 常用命令
 
 ```bash
 cd /root/code/GPUSupportToolkit/GPUSupportToolkit/gst
-
-# 下载依赖
+export PATH=/usr/local/go/bin:$PATH
 export GOPROXY=https://goproxy.cn,direct
-go mod tidy
 
-# 编译 GUI
-export CGO_ENABLED=1
-go build -o bin/gst ./cmd/gst
+# 编译
+go build -o bin/gst-server ./cmd/gst-server
+go build -o bin/gst-cli ./cmd/cli
 
-# 运行开发版本
-make dev
+# 运行
+GST_LOG_DIR=/root/code/GPUSupportToolkit ./bin/gst-server -port 8080 -browser=false
 
-# 运行测试
+# 测试
 go test ./... -v
 go test ./internal/core/... -v
 
 # 代码检查
-go vet ./...
-go fmt ./...
+go vet ./... && go fmt ./...
 ```
-
-## 模块说明
-
-| 模块 | 路径 | 职责 |
-|:---|:---|:---|
-| parser | `internal/core/parser/` | 解析 apitrace/profile 日志 |
-| search | `internal/core/search/` | 关键字和时间段检索 |
-| analyzer | `internal/core/analyzer/` | 帧分析、函数统计、Shader统计 |
-| exporter | `internal/core/exporter/` | 导出 TXT/CSV/JSON |
-| platform | `internal/platform/` | 文件读取、OS检测 |
-| ui | `internal/ui/` | Fyne 图形界面 |
-
-## 开发流程
-
-1. **修改代码**
-2. **运行测试**: `go test ./internal/core/... -v`
-3. **编译验证**: `go build ./...`
-4. **提交**: `git add . && git commit -m "描述"`
-
-## 测试日志
-
-示例日志位于: `../exmple_log/`
-
-- `1frame_demo_api.txt` - API 日志示例
-- `1frame_profile_demo.txt` - Profile 日志示例
 
 ## 注意事项
 
-- GUI 编译需要 X11 开发库 (`libx11-dev` 等)
-- WSL 环境下可能无法编译 GUI，需在原生 Linux
-- 核心模块测试不依赖 GUI，可在任何环境运行
+- Go 1.22，零外部依赖，CGO_ENABLED=0
+- 核心模块测试不依赖 GUI
+- 格式检测扫描 500 行（兼容 GDB 输出头部的日志）
+- `(nil)` 空指针匹配已包含无 `ptr=` 前缀的格式

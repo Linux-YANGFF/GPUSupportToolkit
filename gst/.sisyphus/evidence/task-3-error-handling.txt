@@ -1,0 +1,25 @@
+Task: Fix error handling in gst/cmd/cli/main.go
+================================================
+
+## os.Open fixes (6 locations):
+1. parseLog() line 125  - file, _ = os.Open(filePath)  →  file, err = os.Open(filePath) + check
+2. searchTimeRange()    - file, _ := os.Open(filePath) →  file, err := os.Open(filePath) + check
+3. analyzeFrames()      - file, _ := os.Open(filePath) →  file, err := os.Open(filePath) + check
+4. showFuncStats()      - file, _ := os.Open(filePath) →  file, err := os.Open(filePath) + check
+5. showShaderStats()    - file, _ := os.Open(filePath) →  file, err := os.Open(filePath) + check
+6. exportResults()      - file, _ := os.Open(filePath) →  file, err := os.Open(filePath) + check
+
+All now use: fmt.Fprintf(os.Stderr, "错误：无法打开文件 %s: %v\n", filePath, err)
+
+## Export error fixes (3 locations):
+1. exportResults() TXT  - _ = exp.Export(&buf)  →  if err := exp.Export(&buf); err != nil { ... }
+2. exportResults() CSV  - _ = exp.Export(&buf)  →  if err := exp.Export(&buf); err != nil { ... }
+3. exportResults() JSON - _ = exp.Export(&buf)  →  if err := exp.Export(&buf); err != nil { ... }
+
+## Verification:
+- go build ./cmd/cli → SUCCESS
+- ./cmd/cli/cli -parse /nonexistent/file.log 2>&1 → Clear stderr error, no panic
+- ./cmd/cli/cli -parse /nonexistent/file.log -search "test" → Clear error
+- ./cmd/cli/cli -parse /nonexistent/file.log -time "1000,5000" → Clear error
+- ./cmd/cli/cli -parse /nonexistent/file.log -export json → Clear error
+- ./cmd/cli/cli -parse exmple_log/1frame_demo_api.txt → Normal parsing works

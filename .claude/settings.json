@@ -1,0 +1,7 @@
+{
+  "enabledPlugins": {
+    "hookify@claude-plugins-official": true,
+    "remember@claude-plugins-official": true,
+    "github@claude-plugins-official": true
+  }
+}

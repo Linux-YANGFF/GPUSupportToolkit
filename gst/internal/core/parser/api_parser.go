@@ -46,8 +46,8 @@ func (p *APIParser) Kind() LogKind { return KindAPITrace }
 func (p *APIParser) Parse(reader io.Reader) (*core.ParsedLog, error) {
 	scanner := bufio.NewScanner(reader)
 	// Increase buffer size to 10MB to support large log files (default is 64KB)
-	buf := make([]byte, 10*1024*1024)
-	scanner.Buffer(buf, 10*1024*1024)
+	buf := make([]byte, DefaultBufferSize)
+	scanner.Buffer(buf, DefaultBufferSize)
 
 	var parsedLog core.ParsedLog
 	var currentFrame *core.FrameInfo

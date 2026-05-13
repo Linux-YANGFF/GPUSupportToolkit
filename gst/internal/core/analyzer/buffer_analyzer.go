@@ -32,34 +32,6 @@ const (
 	UsageDynamicCopy = "GL_DYNAMIC_COPY"
 )
 
-// BufferUsageHint maps common usage patterns to OpenGL constants
-var BufferUsageHint = map[string]string{
-	"0x88B0": TargetArrayBuffer,
-	"0x88B1": TargetElementArrayBuffer,
-	"0x88B8": TargetPixelPackBuffer,
-	"0x88B9": TargetPixelUnpackBuffer,
-	"0x8B11": TargetUniformBuffer,
-	"0x8C8A": TargetTransformFeedback,
-	"0x8B8F": TargetCopyReadBuffer,
-	"0x8B8E": TargetCopyWriteBuffer,
-	"0x8F3F": TargetDrawIndirectBuffer,
-	"0x90D2": TargetShaderStorageBuffer,
-}
-
-// BufferUsagePattern maps OpenGL constants to usage strings
-var BufferUsagePattern = map[string]string{
-	"0x88B0": UsageStaticDraw, // GL_ARRAY_BUFFER
-	"0x88B1": UsageStaticDraw, // GL_ELEMENT_ARRAY_BUFFER
-	"0x88B8": UsageStreamDraw, // GL_PIXEL_PACK_BUFFER
-	"0x88B9": UsageStreamDraw, // GL_PIXEL_UNPACK_BUFFER
-	"0x8B11": UsageStaticDraw, // GL_UNIFORM_BUFFER
-	"0x8C8A": UsageStreamDraw, // GL_TRANSFORM_FEEDBACK
-	"0x8B8F": UsageStreamDraw, // GL_COPY_READ_BUFFER
-	"0x8B8E": UsageStreamDraw, // GL_COPY_WRITE_BUFFER
-	"0x8F3F": UsageStreamDraw, // GL_DRAW_INDIRECT_BUFFER
-	"0x90D2": UsageStaticDraw, // GL_SHADER_STORAGE_BUFFER
-}
-
 // BufferAnalyzer 缓冲区分析器
 type BufferAnalyzer struct {
 	log         *core.ParsedLog
@@ -269,23 +241,23 @@ func (ba *BufferAnalyzer) GetBufferCount() int {
 }
 
 // GetBufferSummary 返回缓冲区统计摘要
-func (ba *BufferAnalyzer) GetBufferSummary() map[string]interface{} {
-	targetStats := make(map[string]map[string]interface{})
+func (ba *BufferAnalyzer) GetBufferSummary() *core.BufferSummary {
+	targetStats := make(map[string]core.BufferTargetStat)
 	for target, bufs := range ba.byTarget {
 		var totalSize int64
 		for _, buf := range bufs {
 			totalSize += buf.Size
 		}
-		targetStats[target] = map[string]interface{}{
-			"count":     len(bufs),
-			"totalSize": totalSize,
+		targetStats[target] = core.BufferTargetStat{
+			Count:     len(bufs),
+			TotalSize: totalSize,
 		}
 	}
 
-	return map[string]interface{}{
-		"totalCount":   len(ba.buffers),
-		"totalSize":    ba.totalSize,
-		"targetStats":  targetStats,
+	return &core.BufferSummary{
+		TotalCount:  len(ba.buffers),
+		TotalSize:   ba.totalSize,
+		TargetStats: targetStats,
 	}
 }
 

@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -225,5 +226,247 @@ func TestRawTraceParser_Kind(t *testing.T) {
 	parser := NewRawTraceParser()
 	if parser.Kind() != KindRawTrace {
 		t.Errorf("Expected KindRawTrace, got %v", parser.Kind())
+	}
+}
+
+func TestAPIParser_Kind(t *testing.T) {
+	parser := &APIParser{}
+	if parser.Kind() != KindAPITrace {
+		t.Errorf("Expected KindAPITrace, got %v", parser.Kind())
+	}
+}
+
+func TestProfileParser_Kind(t *testing.T) {
+	parser := NewProfileParser()
+	if parser.Kind() != KindProfile {
+		t.Errorf("Expected KindProfile, got %v", parser.Kind())
+	}
+}
+
+func TestShouldSkipLine(t *testing.T) {
+	tests := []struct {
+		line     string
+		expected bool
+	}{
+		{"", true},
+		{"   ", true},
+		{"[123:456:789:ERROR:something]", true},
+		{"[1:2:3:module:msg]", true},
+		{"<<gc = 0xffff60638d80>>", true},
+		{"vendor: NVIDIA Corporation", true},
+		{"glBindBuffer: count=491, time=588 us", false},
+		{"glDrawElements 0x0004 2304 0x1403 (nil)", false},
+		{"swapBuffers: 3033 us", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.line, func(t *testing.T) {
+			if got := shouldSkipLine(tt.line); got != tt.expected {
+				t.Errorf("shouldSkipLine(%q) = %v, want %v", tt.line, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestRemoveLinePrefix(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"[     1] glBindBuffer: count=491, time=588 us", "glBindBuffer: count=491, time=588 us"},
+		{"[12345] glDrawElements 0x0004 2304", "glDrawElements 0x0004 2304"},
+		{"no prefix here", "no prefix here"},
+		{"[incomplete", "[incomplete"},
+	}
+	for _, tt := range tests {
+		got := removeLinePrefix(tt.input)
+		if got != tt.want {
+			t.Errorf("removeLinePrefix(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestDetectKindFromReader(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    LogKind
+	}{
+		{"apitrace format", "glBindBuffer: count=491, time=588 us\nswapBuffers: 3033 us\n423 frame cost 109ms\n", KindAPITrace},
+		{"raw trace format", "glBindBuffer 0x8892 498\nglDrawElements 0x0004 2304 0x1403 (nil)\n", KindRawTrace},
+		{"apitrace with prefix", "[     1] glBindBuffer: count=491, time=588 us\n", KindAPITrace},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			kind := DetectKindFromReader(strings.NewReader(tt.content), 50)
+			if kind != tt.want {
+				t.Errorf("DetectKindFromReader = %v, want %v", kind, tt.want)
+			}
+		})
+	}
+}
+
+func TestDetectKindFromReader_Empty(t *testing.T) {
+	kind := DetectKindFromReader(strings.NewReader(""), 10)
+	if kind != KindUnknown {
+		t.Errorf("expected KindUnknown, got %v", kind)
+	}
+}
+
+func TestDetectKindFromReader_SkipLines(t *testing.T) {
+	content := "  \n  \nglBindBuffer: count=1, time=100 us\n"
+	kind := DetectKindFromReader(strings.NewReader(content), 50)
+	if kind != KindAPITrace {
+		t.Errorf("expected KindAPITrace, got %v", kind)
+	}
+}
+
+func TestDetectKindFromReader_LimitLines(t *testing.T) {
+	content := "line1\nline2\nline3\nline4\nglBindBuffer: count=1, time=100 us\n"
+	kind := DetectKindFromReader(strings.NewReader(content), 3)
+	if kind != KindUnknown {
+		t.Errorf("expected KindUnknown due to line limit, got %v", kind)
+	}
+}
+
+func TestCreateParserAuto(t *testing.T) {
+	content := "glBindBuffer: count=491, time=588 us\n"
+	parser, err := CreateParserAuto(strings.NewReader(content))
+	if err != nil {
+		t.Fatalf("CreateParserAuto failed: %v", err)
+	}
+	if parser.Kind() != KindAPITrace {
+		t.Errorf("expected KindAPITrace, got %v", parser.Kind())
+	}
+}
+
+type nonSeekerReader struct{}
+
+func (n nonSeekerReader) Read(p []byte) (int, error) {
+	return 0, io.EOF
+}
+
+func TestCreateParserAuto_WithSeeker(t *testing.T) {
+	_, err := CreateParserAuto(strings.NewReader("glBindBuffer: count=1, time=100 us"))
+	if err != nil {
+		t.Errorf("CreateParserAuto with seekable reader should succeed: %v", err)
+	}
+}
+
+func TestCreateParserAuto_NonSeeker(t *testing.T) {
+	_, err := CreateParserAuto(nonSeekerReader{})
+	if err == nil {
+		t.Error("expected error for non-seeker reader")
+	}
+}
+
+func TestExtractProgramID(t *testing.T) {
+	tests := []struct {
+		params string
+		want   int
+	}{
+		{"18", 18},
+		{"program = 22", 22},
+		{"Program = 5", 5},
+		{"", 0},
+		{"abc", 0},
+	}
+	for _, tt := range tests {
+		got := extractProgramID(tt.params)
+		if got != tt.want {
+			t.Errorf("extractProgramID(%q) = %d, want %d", tt.params, got, tt.want)
+		}
+	}
+}
+
+func TestExtractBufferIDs(t *testing.T) {
+	tests := []struct {
+		params string
+		want   []int
+	}{
+		{"1", []int{1}},
+		{"1, 2, 3", []int{1, 2, 3}},
+		{"5 6 7", []int{5, 6, 7}},
+		{"", nil},
+		{"   ", nil},
+	}
+	for _, tt := range tests {
+		got := extractBufferIDs(tt.params)
+		if len(got) != len(tt.want) {
+			t.Errorf("extractBufferIDs(%q) len = %d, want %d", tt.params, len(got), len(tt.want))
+			continue
+		}
+		for i := range got {
+			if got[i] != tt.want[i] {
+				t.Errorf("extractBufferIDs(%q)[%d] = %d, want %d", tt.params, i, got[i], tt.want[i])
+			}
+		}
+	}
+}
+
+func TestDetectFromLine_EdgeCases(t *testing.T) {
+	tests := []struct {
+		line string
+		want LogKind
+	}{
+		{"[     1] glClear: count=1, time=100 us", KindAPITrace},
+		{"glDeleteBuffers 199", KindRawTrace},
+		{"eglSwapBuffers: display", KindRawTrace},
+	}
+	for _, tt := range tests {
+		got := detectFromLine(tt.line)
+		if got != tt.want {
+			t.Errorf("detectFromLine(%q) = %v, want %v", tt.line, got, tt.want)
+		}
+	}
+}
+
+func TestRawTraceParser_Parse_EdgeCases(t *testing.T) {
+	input := `  leading space
+=> return value
+src: source line
+{ struct open
+__someInternal internal call
+glClear 0x4100
+glXSwapBuffers: dpy = 1, drawable = 1`
+	parser := NewRawTraceParser()
+	parsed, err := parser.Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	if len(parsed.Frames) != 1 {
+		t.Errorf("Expected 1 frame, got %d", len(parsed.Frames))
+	}
+	if len(parsed.Frames[0].APICalls) != 1 {
+		t.Errorf("Expected 1 API call, got %d", len(parsed.Frames[0].APICalls))
+	}
+}
+
+func TestRawTraceParser_SegmentFault(t *testing.T) {
+	input := "core dumped: SIGSEGV\n"
+	parser := NewRawTraceParser()
+	parsed, err := parser.Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	if len(parsed.Frames) != 1 {
+		t.Fatal("expected 1 frame")
+	}
+	call := parsed.Frames[0].APICalls[0]
+	if call.APIName != "__segfault__" {
+		t.Errorf("expected __segfault__, got %s", call.APIName)
+	}
+	if call.ErrorCode != "SIGSEGV" {
+		t.Errorf("expected SIGSEGV error code, got %s", call.ErrorCode)
+	}
+}
+
+func TestRawTraceParser_EmptyInput(t *testing.T) {
+	parser := NewRawTraceParser()
+	parsed, err := parser.Parse(strings.NewReader(""))
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	if len(parsed.Frames) != 0 {
+		t.Errorf("expected 0 frames, got %d", len(parsed.Frames))
 	}
 }

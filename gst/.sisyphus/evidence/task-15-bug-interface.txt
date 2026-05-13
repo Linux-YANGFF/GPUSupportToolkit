@@ -1,0 +1,30 @@
+=== TASK 15: Bug Diagnosis Base Interfaces and Types ===
+
+BUILD: PASS
+VET:   PASS
+FULL PROJECT BUILD: PASS
+
+Created files:
+1. internal/core/bug/diagnoser.go
+   - Diagnoser interface with Diagnose(log *core.ParsedLog) []core.Finding
+
+2. internal/core/bug/registry.go
+   - Registry struct holding Diagnoser instances
+   - Register(d Diagnoser) — appends to list
+   - RegisterNamed(name, d Diagnoser) — also indexes by name
+   - RunAll(log *core.ParsedLog) []core.Finding — collects findings from all
+   - GetDiagnoser(name) Diagnoser — name lookup
+   - NewRegistry() — constructor
+
+3. internal/core/bug/report.go
+   - GenerateReport(sourceFile string, findings []core.Finding) *core.DiagnosisReport
+   - Counts findings by severity (critical/high/medium/low/info)
+   - Sets GeneratedAt to RFC3339 UTC timestamp
+   - Returns complete DiagnosisReport
+
+Verified types in internal/core/types.go:
+- Finding (L116): Severity, Category, Description, Evidence, RootCauseChain, FixSuggestion
+- DiagnoseSummary (L125): TotalFindings, CriticalCount, HighCount, MediumCount, LowCount, InfoCount
+- DiagnoseReport (L134): SourceFile, GeneratedAt, Summary, Findings
+- Severity constants (L108-114): critical/high/medium/low/info
+- ParsedLog (L37): Frames, TotalTimeUs, FPS

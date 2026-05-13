@@ -6,23 +6,27 @@ GST can be installed via deb or rpm packages, or built from source.
 
 Download the appropriate package for your system:
 
+**Pre-built Packages**
+
+Download the appropriate package for your system:
+
 ### Debian/Ubuntu (.deb)
 
 ```bash
-sudo dpkg -i gst_1.0.0_amd64.deb
+sudo dpkg -i gst_2.0.0_amd64.deb
 ```
 
 ### RHEL/CentOS/Fedora (.rpm)
 
 ```bash
-sudo rpm -i gst-1.0.0-1.x86_64.rpm
+sudo rpm -i gst-2.0.0-1.x86_64.rpm
 ```
 
 ## Build from Source
 
 ### Prerequisites
 
-- Go 1.21 or later
+- Go 1.22 or later
 - For gst-server web UI: no additional dependencies
 - For building packages: fpm tool
 
@@ -60,18 +64,18 @@ Manual build with fpm:
 # Debian package
 fpm -s dir -t deb \
   -n gst \
-  -v 1.0.0 \
+  -v 2.0.0 \
   -a amd64 \
-  -p gst_1.0.0_amd64.deb \
+  -p gst_2.0.0_amd64.deb \
   --prefix=/usr \
   -f bin/gst-server=/usr/bin/gst-server
 
 # RPM package
 fpm -s dir -t rpm \
   -n gst \
-  -v 1.0.0 \
+  -v 2.0.0 \
   -a x86_64 \
-  -p gst-1.0.0-1.x86_64.rpm \
+  -p gst-2.0.0-1.x86_64.rpm \
   --prefix=/usr \
   -f bin/gst-server=/usr/bin/gst-server
 ```

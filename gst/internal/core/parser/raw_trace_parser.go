@@ -2,11 +2,11 @@ package parser
 
 import (
 	"bufio"
+	"gst/internal/core"
 	"io"
 	"regexp"
 	"strconv"
 	"strings"
-	"gst/internal/core"
 )
 
 // RawTraceParser handles raw apiTrace format where each line is an individual API call.
@@ -16,6 +16,15 @@ import (
 //   glBindBuffer 0x8892 498
 //   glBufferSubData 0x8892 0 8512 0x7fa1ba6970
 type RawTraceParser struct{}
+
+var (
+	gcTidRegex         = regexp.MustCompile(`^\[\s*\d+\]\s*\(gc=(0x[0-9a-fA-F]+),\s*tid=(0x[0-9a-fA-F]+)\):\s*(.*)`)
+	gcTidNoPrefixRegex = regexp.MustCompile(`^\(gc=(0x[0-9a-fA-F]+),\s*tid=(0x[0-9a-fA-F]+)\):\s*(.*)`)
+	glSetErrorRegex    = regexp.MustCompile(`ERROR!!!\s*__glSetError\s*\(gl_error=([^,\)]+)`)
+	segfaultRegex      = regexp.MustCompile(`(?:段错误|SIGSEGV|core\s+dumped)`)
+	nilPtrRegex        = regexp.MustCompile(`(nil)`)
+	ctxMgmtRegex       = regexp.MustCompile(`^(glXMakeCurrent|glXCreateContextAttribsARB)`)
+)
 
 // NewRawTraceParser creates a new RawTraceParser
 func NewRawTraceParser() *RawTraceParser {
@@ -28,61 +37,159 @@ func (p *RawTraceParser) Kind() LogKind {
 
 func (p *RawTraceParser) Parse(reader io.Reader) (*core.ParsedLog, error) {
 	scanner := bufio.NewScanner(reader)
-	// Increase buffer size to 10MB to support large log files (default is 64KB)
-	buf := make([]byte, 10*1024*1024)
-	scanner.Buffer(buf, 10*1024*1024)
+	buf := make([]byte, DefaultBufferSize)
+	scanner.Buffer(buf, DefaultBufferSize)
 
 	var parsedLog core.ParsedLog
 	var currentFrame *core.FrameInfo
 	frameNum := 0
 	lineNum := 0
+	var inShaderBlock bool
+	var currentShaderSource []string
+	var currentShaderID int
+	var currentShaderCommand string
+	var pendingShader bool
+	var pendingShaderID int
+	var pendingShaderCommand string
+	var pendingReturnAPI string
+	var pendingReturnValues []string
 
 	for scanner.Scan() {
 		lineNum++
 		line := scanner.Text()
+		normalized := normalizeRawLine(line)
 
-		// Skip empty lines
+		if inShaderBlock {
+			if isRawShaderBoundary(normalized) {
+				inShaderBlock = false
+				if currentFrame != nil && currentShaderID > 0 && len(currentShaderSource) > 0 {
+					currentFrame.Shaders = append(currentFrame.Shaders, &core.ShaderInfo{
+						ID:          currentShaderID,
+						CommandLine: currentShaderCommand,
+						Source:      strings.Join(currentShaderSource, "\n"),
+					})
+				}
+				currentShaderSource = nil
+				currentShaderID = 0
+				currentShaderCommand = ""
+			} else {
+				currentShaderSource = append(currentShaderSource, normalized)
+			}
+			continue
+		}
+
+		if pendingShader && isRawShaderBoundary(normalized) {
+			inShaderBlock = true
+			currentShaderSource = []string{}
+			currentShaderID = pendingShaderID
+			currentShaderCommand = pendingShaderCommand
+			pendingShader = false
+			continue
+		}
+		if pendingShader {
+			pendingShader = false
+		}
+
+		if pendingReturnAPI != "" {
+			switch {
+			case normalized == "{":
+				continue
+			case normalized == "}":
+				assignReturnToLastCall(currentFrame, pendingReturnAPI, strings.Join(pendingReturnValues, " "))
+				pendingReturnAPI = ""
+				pendingReturnValues = nil
+				continue
+			case normalized != "" && !looksLikeRawAPICall(normalized) && !strings.Contains(normalized, "=>"):
+				pendingReturnValues = append(pendingReturnValues, normalized)
+				continue
+			default:
+				assignReturnToLastCall(currentFrame, pendingReturnAPI, strings.Join(pendingReturnValues, " "))
+				pendingReturnAPI = ""
+				pendingReturnValues = nil
+			}
+		}
+
+		if apiName, value, ok := parseReturnLine(normalized); ok {
+			if value == "" {
+				pendingReturnAPI = apiName
+				pendingReturnValues = []string{}
+			} else {
+				assignReturnToLastCall(currentFrame, apiName, value)
+			}
+			continue
+		}
+
 		if len(strings.TrimSpace(line)) == 0 {
 			continue
 		}
 
-		// Skip Chrome log lines: [pid:tid:timestamp:module:message]
 		if chromeLogRegex.MatchString(line) {
 			continue
 		}
 
-		// Skip WARNING lines
 		if warningRegex.MatchString(line) {
 			continue
 		}
 
-		// Skip indented continuation lines (return values, etc.)
 		if len(line) > 0 && (line[0] == ' ' || line[0] == '\t' || line[0] == '=') {
 			continue
 		}
 
-		// Skip special markers
-		if strings.HasPrefix(line, "=>") || strings.HasPrefix(line, "__") ||
-			strings.HasPrefix(line, "src:") || strings.HasPrefix(line, "dst:") ||
-			strings.HasPrefix(line, "{") || strings.HasPrefix(line, "}") ||
-			strings.HasPrefix(line, "[__dri3") {
+		// Skip return value indicators and structural markers (but NOT __glSetError)
+		if strings.HasPrefix(normalized, "=>") ||
+			strings.HasPrefix(normalized, "src:") || strings.HasPrefix(normalized, "dst:") ||
+			strings.HasPrefix(normalized, "{") || strings.HasPrefix(normalized, "}") ||
+			strings.HasPrefix(normalized, "[__dri3") {
 			continue
 		}
 
-		// Skip lines with context prefix: (gc=0x..., tid=0x...):
-		if strings.HasPrefix(line, "(") && strings.Contains(line, "gc=") {
+		// Check for __glSetError before the generic __ prefix skip
+		if strings.HasPrefix(line, "__glSetError") || strings.Contains(line, "__glSetError") {
+			entry := core.APILogEntry{
+				APIName:   "__glSetError",
+				Count:     1,
+				LineNum:   lineNum,
+				IsError:   true,
+				RawParams: line,
+			}
+			if matches := glSetErrorRegex.FindStringSubmatch(line); len(matches) > 1 {
+				entry.ErrorCode = "gl_error=" + matches[1]
+			}
+			ensureFrame(&currentFrame, frameNum, lineNum)
+			currentFrame.APICalls = append(currentFrame.APICalls, entry)
 			continue
 		}
 
-		// Parse the API call
-		apiName, params := parseAPICall(line)
+		// Skip other __ prefixed lines
+		if strings.HasPrefix(line, "__") {
+			continue
+		}
+
+		// Detect segment fault markers
+		if segfaultRegex.MatchString(line) {
+			entry := core.APILogEntry{
+				APIName:   "__segfault__",
+				Count:     1,
+				LineNum:   lineNum,
+				IsError:   true,
+				ErrorCode: "SIGSEGV",
+				RawParams: line,
+			}
+			ensureFrame(&currentFrame, frameNum, lineNum)
+			currentFrame.APICalls = append(currentFrame.APICalls, entry)
+			continue
+		}
+
+		// Extract gc= and tid= from context prefix: (gc=0x..., tid=0x...):
+		gcAddr, tid, workLine := extractGCTID(line)
+
+		apiName, params := parseAPICall(workLine)
 		if apiName == "" {
 			continue
 		}
 
-		// Check if this is a frame boundary (swapBuffers)
+		// Frame boundary detection
 		if isRawFrameBoundary(apiName) {
-			// Save current frame if exists
 			if currentFrame != nil {
 				currentFrame.EndLine = lineNum - 1
 				parsedLog.Frames = append(parsedLog.Frames, *currentFrame)
@@ -92,43 +199,43 @@ func (p *RawTraceParser) Parse(reader io.Reader) (*core.ParsedLog, error) {
 			continue
 		}
 
-		// Start a new frame if needed
-		if currentFrame == nil {
-			currentFrame = &core.FrameInfo{
-				FrameNum:    frameNum,
-				StartLine:   lineNum,
-				TotalTimeUs: 0, // Raw format has no timing info
-				APICalls:    []core.APILogEntry{},
-				APISummary:  make(map[string]*core.APISummary),
-				Shaders:     []*core.ShaderInfo{},
-			}
-		}
+		ensureFrame(&currentFrame, frameNum, lineNum)
 
-		// Create API entry
+		hasNilPtr := nilPtrRegex.MatchString(params)
+
 		entry := core.APILogEntry{
 			APIName:   apiName,
-			Count:     1, // Raw format: each line is one call
-			TimeUs:    0, // Raw format: no timing info
+			Count:     1,
+			TimeUs:    0,
 			LineNum:   lineNum,
 			RawParams: params,
+			GCAddr:    gcAddr,
+			TID:       tid,
+			HasNilPtr: hasNilPtr,
 		}
 
 		currentFrame.APICalls = append(currentFrame.APICalls, entry)
 
-		// Track shader programs
+		if apiName == "glShaderSource" {
+			if shaderID := firstIntParam(params); shaderID > 0 {
+				pendingShader = true
+				pendingShaderID = shaderID
+				pendingShaderCommand = normalized
+			}
+		}
+
 		if apiName == "glUseProgram" {
 			if progID := extractProgramID(params); progID > 0 {
 				currentFrame.Programs = append(currentFrame.Programs, progID)
 			}
 		}
 
-		// Track buffer operations
 		if apiName == "glGenBuffers" || apiName == "glCreateBuffers" {
 			if ids := extractBufferIDs(params); len(ids) > 0 {
 				for _, id := range ids {
 					bufInfo := core.BufferInfo{
 						ID:     id,
-						Target: "GL_ARRAY_BUFFER", // Default, will be updated by glBindBuffer
+						Target: "GL_ARRAY_BUFFER",
 						Size:   0,
 						Usage:  "",
 					}
@@ -138,13 +245,21 @@ func (p *RawTraceParser) Parse(reader io.Reader) (*core.ParsedLog, error) {
 		}
 	}
 
-	// Handle last frame
+	if pendingReturnAPI != "" {
+		assignReturnToLastCall(currentFrame, pendingReturnAPI, strings.Join(pendingReturnValues, " "))
+	}
+	if inShaderBlock && currentFrame != nil && currentShaderID > 0 && len(currentShaderSource) > 0 {
+		currentFrame.Shaders = append(currentFrame.Shaders, &core.ShaderInfo{
+			ID:          currentShaderID,
+			CommandLine: currentShaderCommand,
+			Source:      strings.Join(currentShaderSource, "\n"),
+		})
+	}
 	if currentFrame != nil {
 		currentFrame.EndLine = lineNum
 		parsedLog.Frames = append(parsedLog.Frames, *currentFrame)
 	}
 
-	// Calculate stats
 	for _, frame := range parsedLog.Frames {
 		parsedLog.TotalTimeUs += frame.TotalTimeUs
 	}
@@ -153,6 +268,75 @@ func (p *RawTraceParser) Parse(reader io.Reader) (*core.ParsedLog, error) {
 	}
 
 	return &parsedLog, scanner.Err()
+}
+
+func normalizeRawLine(line string) string {
+	return strings.TrimSpace(removeRawTraceLinePrefix(strings.TrimSpace(line)))
+}
+
+func isRawShaderBoundary(line string) bool {
+	return strings.TrimSpace(line) == "####"
+}
+
+func looksLikeRawAPICall(line string) bool {
+	apiName, _ := parseAPICall(line)
+	return apiName != ""
+}
+
+func parseReturnLine(line string) (apiName string, value string, ok bool) {
+	idx := strings.Index(line, "=>")
+	if idx < 0 {
+		return "", "", false
+	}
+	left := strings.TrimSpace(line[:idx])
+	right := strings.TrimSpace(line[idx+2:])
+	if left == "" {
+		return "", "", false
+	}
+	fields := strings.Fields(left)
+	if len(fields) == 0 {
+		return "", "", false
+	}
+	name := fields[0]
+	if !(strings.HasPrefix(name, "gl") || strings.HasPrefix(name, "egl") || strings.HasPrefix(name, "glut")) {
+		return "", "", false
+	}
+	return name, right, true
+}
+
+func assignReturnToLastCall(frame *core.FrameInfo, apiName string, value string) {
+	if frame == nil || apiName == "" {
+		return
+	}
+	for i := len(frame.APICalls) - 1; i >= 0; i-- {
+		if frame.APICalls[i].APIName == apiName && frame.APICalls[i].ReturnValue == "" {
+			frame.APICalls[i].ReturnValue = value
+			return
+		}
+	}
+}
+
+func ensureFrame(frame **core.FrameInfo, frameNum int, lineNum int) {
+	if *frame == nil {
+		*frame = &core.FrameInfo{
+			FrameNum:    frameNum,
+			StartLine:   lineNum,
+			TotalTimeUs: 0,
+			APICalls:    []core.APILogEntry{},
+			APISummary:  make(map[string]*core.APISummary),
+			Shaders:     []*core.ShaderInfo{},
+		}
+	}
+}
+
+func extractGCTID(line string) (gcAddr, tid, workLine string) {
+	if matches := gcTidRegex.FindStringSubmatch(line); len(matches) > 3 {
+		return matches[1], matches[2], matches[3]
+	}
+	if matches := gcTidNoPrefixRegex.FindStringSubmatch(line); len(matches) > 3 {
+		return matches[1], matches[2], matches[3]
+	}
+	return "", "", line
 }
 
 // removeRawTraceLinePrefix removes line号前缀 [N] or [sequence]
@@ -227,6 +411,33 @@ func extractProgramID(params string) int {
 		}
 	}
 	return 0
+}
+
+func firstIntParam(params string) int {
+	parts := strings.Fields(strings.TrimSpace(params))
+	if len(parts) == 0 {
+		return 0
+	}
+	return parseNumericParam(parts[0])
+}
+
+func parseNumericParam(s string) int {
+	s = strings.TrimSpace(strings.Trim(s, ","))
+	if s == "" || s == "(nil)" {
+		return 0
+	}
+	if len(s) > 2 && (s[:2] == "0x" || s[:2] == "0X") {
+		v, err := strconv.ParseInt(s[2:], 16, 64)
+		if err != nil {
+			return 0
+		}
+		return int(v)
+	}
+	v, err := strconv.Atoi(s)
+	if err != nil {
+		return 0
+	}
+	return v
 }
 
 // extractBufferIDs extracts buffer IDs from glGenBuffers/glCreateBuffers params

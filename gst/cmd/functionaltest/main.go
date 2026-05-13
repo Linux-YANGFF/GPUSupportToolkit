@@ -13,7 +13,7 @@ import (
 )
 
 func main() {
-	fmt.Println("=== GST 功能测试 ===\n")
+	fmt.Print("=== GST 功能测试 ===\n\n")
 
 	// 1. 测试 Parser
 	fmt.Println("1. Parser 测试")
@@ -43,7 +43,7 @@ swapBuffers: 3033 us
 	fmt.Printf("   找到 %d 个慢帧\n", len(topFrames))
 	summary := frameAnalyzer.GetFrameSummary()
 	if summary != nil {
-		fmt.Printf("   总帧数: %v, 总时间: %v us\n", summary["total_frames"], summary["total_time_us"])
+		fmt.Printf("   总帧数: %v, 总时间: %v us\n", summary.TotalFrames, summary.TotalTimeUs)
 	}
 
 	// 3. 测试 Search
@@ -83,7 +83,7 @@ swapBuffers: 3033 us
 	// 测试 JSON Exporter
 	tmpJSON, _ := os.CreateTemp("", "gst_test_*.json")
 	defer os.Remove(tmpJSON.Name())
-	jsonExp := exporter.JSONExporter{Data: parsed}
+	jsonExp := exporter.JSONExporter[*core.ParsedLog]{Data: parsed}
 	err = jsonExp.Export(tmpJSON)
 	if err != nil {
 		fmt.Printf("   JSON Export 失败: %v\n", err)

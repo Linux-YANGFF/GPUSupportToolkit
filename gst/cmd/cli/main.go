@@ -5,19 +5,21 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
+	"gst/internal/core"
 	"gst/internal/core/analyzer"
+	"gst/internal/core/bug"
 	"gst/internal/core/exporter"
 	"gst/internal/core/parser"
 	"gst/internal/core/search"
+	"gst/internal/platform"
 )
 
 var (
-	// 命令 flags
 	parseCmd    = flag.String("parse", "", "Parse log file")
 	searchCmd   = flag.String("search", "", "Search keyword in log file")
 	timeRange   = flag.String("time", "", "Time range search: startUs,endUs (e.g., 1000,50000)")
@@ -26,15 +28,29 @@ var (
 	shaderStats = flag.Bool("shader", false, "Show shader statistics")
 	exportFmt   = flag.String("export", "", "Export format: txt|csv|json")
 	output      = flag.String("output", "", "Output file (default: stdout)")
+	diagnose    = flag.Bool("diagnose", false, "Run bug diagnosis on log file")
 	help        = flag.Bool("help", false, "Show help")
+	verbose     = flag.Bool("verbose", false, "Enable verbose logging")
 )
 
 func main() {
 	flag.Parse()
 
+	if *verbose {
+		platform.InitLogger("debug")
+	} else {
+		platform.InitLogger("warn")
+	}
+
 	if *help || flag.NFlag() == 0 {
 		printHelp()
 		os.Exit(0)
+	}
+
+	// Bug 诊断 — 独立模式，运行完直接退出
+	if *diagnose && *parseCmd != "" {
+		runDiagnose(*parseCmd)
+		return
 	}
 
 	// 解析日志文件
@@ -71,10 +87,12 @@ func main() {
 	if *exportFmt != "" && *parseCmd != "" {
 		exportResults(*parseCmd, *exportFmt, *output)
 	}
+
+
 }
 
 func printHelp() {
-	fmt.Println(`GST CLI - GPU Support Toolkit 命令行工具
+	fmt.Print(`GST CLI - GPU Support Toolkit 命令行工具
 
 用法:
   gst-cli [选项] -parse <文件>        解析日志文件
@@ -85,6 +103,8 @@ func printHelp() {
   gst-cli -shader -parse <文件>       显示Shader统计
   gst-cli -export <格式> -parse <文件>  导出结果
 
+  gst-cli -diagnose -parse <文件>      运行 Bug 诊断分析
+
 选项:
   -parse <文件>      解析指定的日志文件
   -search <关键字>   搜索关键字（支持多个，空格分隔）
@@ -94,6 +114,8 @@ func printHelp() {
   -shader           显示Shader统计
   -export <格式>    导出格式: txt, csv, json
   -output <文件>    输出文件 (默认: stdout)
+  -diagnose         运行 Bug 诊断分析（空指针、资源泄漏、Shader 错误等）
+  -verbose          启用详细日志
   -help             显示帮助
 
 示例:
@@ -103,6 +125,7 @@ func printHelp() {
   gst-cli -parse trace.api.txt -top 20
   gst-cli -parse trace.api.txt -funcs
   gst-cli -parse trace.api.txt -export json -output result.json
+  gst-cli -diagnose -parse trace.api.txt
 `)
 }
 
@@ -111,8 +134,9 @@ func parseLog(filePath string) {
 
 	file, err := os.Open(filePath)
 	if err != nil {
-		fmt.Printf("错误: 无法打开文件: %v\n", err)
-		return
+		slog.Error("无法打开文件", "path", filePath, "error", err)
+		fmt.Fprintf(os.Stderr, "错误: 无法打开文件: %v\n", err)
+		os.Exit(1)
 	}
 
 	// 使用改进的检测函数扫描前100行找到第一个有效行
@@ -122,10 +146,14 @@ func parseLog(filePath string) {
 	fmt.Printf("检测类型: %s\n", kind)
 
 	// 重新打开文件解析
-	file, _ = os.Open(filePath)
+	file, err = os.Open(filePath)
+	if err != nil {
+		slog.Error("无法打开文件", "path", filePath, "error", err)
+		return
+	}
+	defer file.Close()
 	p := parser.CreateParser(kind)
 	parsed, err := p.Parse(file)
-	file.Close()
 
 	if err != nil {
 		fmt.Printf("错误: 解析失败: %v\n", err)
@@ -199,11 +227,15 @@ func searchTimeRange(filePath string, timeRangeStr string) {
 
 	fmt.Printf("=== 时间段检索: [%d, %d] us ===\n\n", startUs, endUs)
 
-	file, _ := os.Open(filePath)
+	file, err := os.Open(filePath)
+	if err != nil {
+		slog.Error("无法打开文件", "path", filePath, "error", err)
+		return
+	}
+	defer file.Close()
 	kind := parser.DetectKind("")
 	p := parser.CreateParser(kind)
 	parsed, err := p.Parse(file)
-	file.Close()
 
 	if err != nil {
 		fmt.Printf("错误: 解析失败: %v\n", err)
@@ -223,11 +255,15 @@ func searchTimeRange(filePath string, timeRangeStr string) {
 func analyzeFrames(filePath string, topN int) {
 	fmt.Printf("=== 帧分析 (Top %d) ===\n\n", topN)
 
-	file, _ := os.Open(filePath)
+	file, err := os.Open(filePath)
+	if err != nil {
+		slog.Error("无法打开文件", "path", filePath, "error", err)
+		return
+	}
+	defer file.Close()
 	kind := parser.DetectKind("")
 	p := parser.CreateParser(kind)
 	parsed, err := p.Parse(file)
-	file.Close()
 
 	if err != nil {
 		fmt.Printf("错误: 解析失败: %v\n", err)
@@ -239,10 +275,10 @@ func analyzeFrames(filePath string, topN int) {
 	summary := fa.GetFrameSummary()
 
 	fmt.Printf("统计摘要:\n")
-	fmt.Printf("  总帧数: %d\n", summary["total_frames"])
-	fmt.Printf("  平均耗时: %d us\n", summary["avg_time_us"])
-	fmt.Printf("  最大耗时: %d us\n", summary["max_time_us"])
-	fmt.Printf("  最小耗时: %d us\n", summary["min_time_us"])
+	fmt.Printf("  总帧数: %d\n", summary.TotalFrames)
+	fmt.Printf("  平均耗时: %d us\n", summary.AvgTimeUs)
+	fmt.Printf("  最大耗时: %d us\n", summary.MaxTimeUs)
+	fmt.Printf("  最小耗时: %d us\n", summary.MinTimeUs)
 	fmt.Println()
 
 	fmt.Printf("Top %d 最慢帧:\n\n", len(topFrames))
@@ -264,13 +300,18 @@ func analyzeFrames(filePath string, topN int) {
 }
 
 func showFuncStats(filePath string) {
-	fmt.Println("=== 函数统计 ===\n")
+	fmt.Println("=== 函数统计 ===")
+	fmt.Println()
 
-	file, _ := os.Open(filePath)
+	file, err := os.Open(filePath)
+	if err != nil {
+		slog.Error("无法打开文件", "path", filePath, "error", err)
+		return
+	}
+	defer file.Close()
 	kind := parser.DetectKind("")
 	p := parser.CreateParser(kind)
 	parsed, err := p.Parse(file)
-	file.Close()
 
 	if err != nil {
 		fmt.Printf("错误: 解析失败: %v\n", err)
@@ -291,13 +332,18 @@ func showFuncStats(filePath string) {
 }
 
 func showShaderStats(filePath string) {
-	fmt.Println("=== Shader 统计 ===\n")
+	fmt.Println("=== Shader 统计 ===")
+	fmt.Println()
 
-	file, _ := os.Open(filePath)
+	file, err := os.Open(filePath)
+	if err != nil {
+		slog.Error("无法打开文件", "path", filePath, "error", err)
+		return
+	}
+	defer file.Close()
 	kind := parser.DetectKind("")
 	p := parser.CreateParser(kind)
 	parsed, err := p.Parse(file)
-	file.Close()
 
 	if err != nil {
 		fmt.Printf("错误: 解析失败: %v\n", err)
@@ -325,11 +371,15 @@ func showShaderStats(filePath string) {
 func exportResults(filePath string, format string, outputPath string) {
 	fmt.Printf("=== 导出结果 (格式: %s) ===\n\n", format)
 
-	file, _ := os.Open(filePath)
+	file, err := os.Open(filePath)
+	if err != nil {
+		slog.Error("无法打开文件", "path", filePath, "error", err)
+		return
+	}
+	defer file.Close()
 	kind := parser.DetectKind("")
 	p := parser.CreateParser(kind)
 	parsed, err := p.Parse(file)
-	file.Close()
 
 	if err != nil {
 		fmt.Printf("错误: 解析失败: %v\n", err)
@@ -341,13 +391,22 @@ func exportResults(filePath string, format string, outputPath string) {
 	switch format {
 	case "txt":
 		exp := exporter.TXTExporter{}
-		_ = exp.Export(&buf)
+		if err := exp.Export(&buf); err != nil {
+			slog.Error("导出 TXT 失败", "error", err)
+			return
+		}
 	case "csv":
-		exp := exporter.CSVExporter{Data: parsed}
-		_ = exp.Export(&buf)
+		exp := exporter.FramesCSVExporter{Frames: parsed.Frames}
+		if err := exp.Export(&buf); err != nil {
+			slog.Error("导出 CSV 失败", "error", err)
+			return
+		}
 	case "json":
-		exp := exporter.JSONExporter{Data: parsed}
-		_ = exp.Export(&buf)
+		exp := exporter.JSONExporter[*core.ParsedLog]{Data: parsed}
+		if err := exp.Export(&buf); err != nil {
+			slog.Error("导出 JSON 失败", "error", err)
+			return
+		}
 	default:
 		fmt.Printf("错误: 不支持的格式: %s (支持: txt, csv, json)\n", format)
 		return
@@ -361,9 +420,31 @@ func exportResults(filePath string, format string, outputPath string) {
 	}
 }
 
-// 辅助函数: 计时装饰器
-func timeit(name string, f func()) {
-	start := time.Now()
-	f()
-	fmt.Printf("[耗时: %v]\n", time.Since(start))
+func runDiagnose(filePath string) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		slog.Error("无法打开文件", "path", filePath, "error", err)
+		fmt.Fprintf(os.Stderr, "错误: 无法打开文件: %v\n", err)
+		return
+	}
+	defer file.Close()
+
+	p, err := parser.CreateParserAuto(file)
+	if err != nil {
+		slog.Error("解析器检测失败", "error", err)
+		fmt.Fprintf(os.Stderr, "错误: 解析器检测失败: %v\n", err)
+		return
+	}
+	parsed, err := p.Parse(file)
+	if err != nil {
+		slog.Error("解析失败", "error", err)
+		fmt.Fprintf(os.Stderr, "错误: 解析失败: %v\n", err)
+		return
+	}
+
+	registry := bug.NewDefaultRegistry()
+	findings := registry.RunAll(parsed)
+
+	markdown := bug.GenerateMarkdownReport(findings, filePath)
+	fmt.Print(markdown)
 }

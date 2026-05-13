@@ -1,0 +1,26 @@
+# Local dependencies
+node_modules/
+gst/web/node_modules/
+.opencode/
+
+# Build outputs
+dist/
+bin/
+gst/bin/
+gst/web/dist/
+
+# Go build/test artifacts
+gst/cli
+gst/gst-server
+gst/cmd/cli/cli
+*.test
+*.out
+coverage.out
+
+# Local logs and large trace samples
+exmple_log/
+.remember/
+
+# Local assistant/runtime scratch directories
+.codex/
+.agents/

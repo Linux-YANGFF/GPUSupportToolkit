@@ -1,0 +1,27 @@
+Task: Refactor analyzer GetSummary methods to return concrete types
+Status: COMPLETE
+Verified: go build ./internal/core/... (EXIT 0), go test ./internal/core/... -v (all PASS)
+
+Changes made:
+
+1. frame_analyzer.go
+   - GetFrameSummary() → returns *core.FrameSummary (was map[string]interface{})
+   - Fields: TotalFrames, AvgTimeUs, MaxTimeUs, MinTimeUs, TotalTimeUs
+
+2. buffer_analyzer.go
+   - GetBufferSummary() → returns *core.BufferSummary (was map[string]interface{})
+   - Fields: TotalCount, TotalSize, TargetStats (map[string]BufferTargetStat)
+
+3. func_analyzer.go
+   - Added GetFuncSummary() → returns *core.FuncSummary
+   - Fields: TotalFunctions, TotalCalls, TotalTimeUs, TopFunctions (top 10)
+
+4. shader_analyzer.go
+   - GetShaderSummary() → returns *core.ShaderSummary (was map[string]interface{})
+   - Fields: ShaderTypes, TotalCompile, TotalTimeUs
+
+Callers updated:
+   - cmd/cli/main.go (struct field access instead of map key)
+   - cmd/functionaltest/main.go (struct field access instead of map key)
+   - cmd/gst-server/internal/handlers/handlers.go (SlowFrames type changed)
+   - internal/core/analyzer/analyzer_test.go (struct field access in tests)

@@ -4,8 +4,8 @@ GST is a GPU log analysis tool for parsing and analyzing apitrace/profile logs.
 
 ## Two Main Tools
 
-- **gst-server**: Web-based UI server for visual log analysis
-- **gst-cli**: Command-line tool for parsing and analyzing logs
+- **gst-server**: Web-based UI server for visual log analysis and bug diagnosis
+- **gst-cli**: Command-line tool for parsing, analyzing, and diagnosing GPU logs
 
 ## Quick Start
 
@@ -50,7 +50,24 @@ Then open http://localhost:8080 in your browser.
 
 # Search for keywords
 ./bin/gst-cli -search glDrawElements -parse /path/to/log.trace
+
+# Run bug diagnosis (7 analyzers)
+./bin/gst-cli -diagnose -parse /path/to/log.trace
 ```
+
+## Features
+
+| Feature | Description |
+|:---|:---|
+| Log Parsing | Streaming parse of apitrace/profile logs (>1GB) |
+| Keyword Search | Multi-keyword AND matching, case-insensitive |
+| Time Range Search | Search API calls by time range |
+| Frame Analysis | Find top N slowest frames |
+| Function Stats | Call count and total time per function |
+| Shader Stats | Shader compilation statistics |
+| Multi-format Export | TXT/CSV/JSON export |
+| **Bug Diagnosis** | 7 analyzers: null pointer, resource leak, shader error, API anti-pattern, perf anomaly, thread safety, driver error |
+| Structured Logging | Go 1.22+ `log/slog` with configurable levels |
 
 ## Log Formats Supported
 
@@ -77,11 +94,13 @@ gst/
 │   ├── gst-server/    # Web server
 │   └── cli/           # CLI tool
 ├── internal/
-│   └── core/
-│       ├── parser/    # Log parsers
-│       ├── analyzer/  # Frame, function, shader analysis
-│       ├── search/    # Keyword and time range search
-│       └── exporter/  # JSON/CSV/TXT export
+│   ├── core/
+│   │   ├── parser/    # Log parsers
+│   │   ├── analyzer/  # Frame, function, shader analysis
+│   │   ├── search/    # Keyword and time range search
+│   │   ├── exporter/  # JSON/CSV/TXT export
+│   │   └── bug/       # Bug diagnosis engine (7 analyzers + state machine)
+│   └── platform/      # File I/O, OS detection, slog logger
 ├── web/               # Web UI files
 └── packaging/         # Package configurations
 ```

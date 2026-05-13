@@ -1,0 +1,43 @@
+Task 2: 核心类型定义重构 - 验证结果
+
+日期: 2026-05-09
+
+编译验证:
+$ go build ./internal/core/...
+结果: 零错误，编译通过
+
+Vet 验证:
+$ go vet ./internal/core/...
+结果: 零警告
+
+测试验证:
+$ go test ./internal/core/... -count=1
+  gst/internal/core          — no test files
+  gst/internal/core/analyzer — PASS (0.003s)
+  gst/internal/core/exporter — PASS (0.008s)
+  gst/internal/core/parser   — PASS (0.016s)
+  gst/internal/core/search   — PASS (0.009s)
+结果: 全部通过
+
+新增类型 (gst/internal/core/types.go):
+
+1. FrameSummary — 帧统计摘要 (total_frames, avg_time_us, max_time_us, min_time_us, total_time_us)
+2. BufferSummary — 缓冲区统计摘要 (total_count, total_size, target_stats)
+3. BufferTargetStat — 按目标类型的缓冲区统计 (count, total_size)
+4. FuncSummary — 函数调用统计摘要 (total_functions, total_calls, total_time_us, top_functions)
+5. ShaderSummary — Shader 统计摘要 (shader_types, total_compile, total_time_us)
+6. Severity — 诊断严重程度枚举类型 (critical/high/medium/low/info)
+7. Finding — 单个诊断发现 (severity, category, description, evidence, root_cause_chain, fix_suggestion)
+8. DiagnosisSummary — 诊断报告摘要 (total_findings, critical/high/medium/low/info 计数)
+9. DiagnosisReport — 诊断报告 (source_file, generated_at, summary, findings)
+
+扩展 APILogEntry 字段:
+- GCAddr    string — Graphics Context 地址
+- TID       string — 线程 ID
+- IsError   bool   — 是否为驱动层错误
+- ErrorCode string — GL 错误码
+- HasNilPtr bool   — ptr=(nil) 标记
+
+向后兼容:
+- 未修改任何现有结构体的字段名或 JSON 标签
+- 新增字段均使用 omitempty，序列化时不影响现有消费者

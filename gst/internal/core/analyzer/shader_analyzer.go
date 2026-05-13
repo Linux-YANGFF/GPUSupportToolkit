@@ -31,7 +31,6 @@ func (sa *ShaderAnalyzer) Analyze() []core.ShaderCompileInfo {
 
 	sa.shaders = make(map[string]*core.ShaderCompileInfo)
 
-	// 遍历所有帧
 	for _, frame := range sa.log.Frames {
 		for _, call := range frame.APICalls {
 			switch {
@@ -72,7 +71,7 @@ func (sa *ShaderAnalyzer) incShaderStat(shaderType string, timeUs int64) {
 }
 
 // GetShaderSummary 获取Shader统计摘要
-func (sa *ShaderAnalyzer) GetShaderSummary() map[string]interface{} {
+func (sa *ShaderAnalyzer) GetShaderSummary() *core.ShaderSummary {
 	infos := sa.Analyze()
 	if infos == nil {
 		return nil
@@ -86,9 +85,9 @@ func (sa *ShaderAnalyzer) GetShaderSummary() map[string]interface{} {
 		totalTime += info.TotalCompileTimeUs
 	}
 
-	return map[string]interface{}{
-		"shader_types":  len(infos),
-		"total_compile": totalCount,
-		"total_time_us": totalTime,
+	return &core.ShaderSummary{
+		ShaderTypes:  len(infos),
+		TotalCompile: totalCount,
+		TotalTimeUs:  totalTime,
 	}
 }

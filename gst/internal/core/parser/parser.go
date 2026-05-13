@@ -19,6 +19,8 @@ const (
 	KindUnknown  LogKind = "unknown"
 )
 
+const DefaultBufferSize = 10 * 1024 * 1024
+
 // Parser 解析器接口
 type Parser interface {
 	Parse(reader io.Reader) (*core.ParsedLog, error)
@@ -56,7 +58,7 @@ func DetectKindFromReader(reader io.Reader, maxLines int) LogKind {
 	scanner := bufio.NewScanner(reader)
 	// Increase default buffer size for large lines
 	buf := make([]byte, 0, 1024*1024)
-	scanner.Buffer(buf, 10*1024*1024)
+	scanner.Buffer(buf, DefaultBufferSize)
 
 	lineNum := 0
 	hasAggregatedFormat := false
@@ -227,7 +229,7 @@ func CreateParserAuto(reader io.Reader) (Parser, error) {
 		return nil, fmt.Errorf("reader must support seeking for auto-detection")
 	}
 
-	kind := DetectKindFromReader(reader, 50)
+	kind := DetectKindFromReader(reader, 500)
 
 	// 重置读取位置
 	_, err := seeker.Seek(0, io.SeekStart)

@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"runtime"
@@ -68,12 +69,11 @@ func CheckDesktopEnvironment() (bool, error) {
 
 	// Check if X server is accessible
 	if runtime.GOOS == "linux" {
-		// Try to execute xdpyinfo as a more reliable check
 		cmd = exec.Command("xdpyinfo")
-		err := cmd.Run()
-		if err == nil {
-			return true, nil
+		if err := cmd.Run(); err != nil {
+			return false, fmt.Errorf("desktop environment check failed: %w", err)
 		}
+		return true, nil
 	}
 
 	// DISPLAY is set, assume desktop environment exists

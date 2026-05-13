@@ -1,0 +1,29 @@
+Task 4: Security Hardening - Evidence Log
+==========================================
+
+Build: PASS (go build ./cmd/gst-server)
+Vet:   PASS (no new warnings)
+Tests: PASS (all existing tests pass)
+
+Changes:
+1. handlers.go: Added validateLogPath() function that:
+   - Rejects empty paths
+   - Rejects paths containing ".." (directory traversal)
+   - Enforces whitelist directory (GST_LOG_DIR env var, default CWD)
+   - Resolves paths to absolute and checks they're within allowed directory
+
+2. handlers.go: Added validateLogPath() call before os.Open() in ParseLog handler
+   - Returns HTTP 400 with error message on rejection
+
+3. handlers.go: Removed dead code:
+   - Line 116: `_ = search.KeywordSearchSimple([]string{""}, lines)`
+
+4. main.go: Added PID file path validation:
+   - Resolves to absolute path
+   - Rejects /etc/, /sys/, /proc/, /dev/ system directories
+
+QA Test (manual - requires running server):
+  curl -s -X POST http://localhost:8080/api/log/parse \
+    -H "Content-Type: application/json" \
+    -d '{"path":"/etc/passwd"}'
+  Expected: HTTP 400 with "Access denied" error

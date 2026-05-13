@@ -1,0 +1,54 @@
+=== Task 11: Phase 1 测试补充 ===
+Date: 2026-05-09
+
+=== Test Files Created ===
+
+1. internal/platform/file_reader_test.go — 9 test functions
+2. cmd/gst-server/internal/handlers/handlers_test.go — 2 test functions
+3. internal/platform/logger_test.go — 3 test functions
+4. cmd/cli/main_test.go — 2 test functions
+
+Total: 16 new test functions
+
+=== Test Details ===
+
+-- file_reader_test.go --
+  TestNewStreamReader: table-driven, valid file + nonexistent file
+  TestStreamReaderReadLines: table-driven, 3/1/0/5-line content
+  TestStreamReaderGetFileSize: verifies file size from StreamReader
+  TestStreamReaderClose: verifies proper close
+  TestDetectOS: validates OS detection returns known value
+  TestIsSupportedOS: validates support check for current OS
+  TestGetEnvInfo: validates env info fields match os.Getenv
+  TestSearchPattern: table-driven, regex search in file
+  TestWriteIndexReadIndex: round-trip index write/read
+
+-- handlers_test.go --
+  TestValidateLogPath: table-driven, 6 path scenarios (valid, empty, .. traversal, /etc/passwd, relative escape, dir itself)
+  TestValidateLogPathDefaultAllowed: 4 path scenarios with default current dir
+
+-- logger_test.go --
+  TestInitLogger: table-driven, 6 level variations (debug/info/warn/error/empty/invalid)
+  TestInitLoggerCanLogAtAllLevels: verifies all slog levels work
+  TestGlobalLoggerDefault: verifies slog.Default() set
+
+-- main_test.go --
+  TestCLI_NonExistentFile: builds CLI, runs with nonexistent file, verifies non-zero exit + error message
+  TestCLI_Help: builds CLI, verifies help output
+
+=== Test Results ===
+
+PASS: gst/internal/platform (0.081s) — all 12 tests
+PASS: gst/cmd/gst-server/internal/handlers (0.005s) — all 2 tests
+PASS: gst/cmd/cli (0.356s) — all 2 tests
+PASS: gst/internal/core/parser (0.022s) — all existing tests
+PASS: gst/internal/core/search (0.004s) — all existing tests
+PASS: gst/internal/core/analyzer (0.003s) — all existing tests
+PASS: gst/internal/core/exporter (0.005s) — all existing tests
+go vet ./... — 0 warnings
+go build ./... — 0 errors
+
+=== Additional Fixes ===
+- Fixed cmd/cli/main.go: parseLog now calls os.Exit(1) on file open error
+- Fixed cmd/cli/main.go: 3 fmt.Println redundant newline vet warnings
+- Fixed cmd/functionaltest/main.go: 1 fmt.Println redundant newline vet warning

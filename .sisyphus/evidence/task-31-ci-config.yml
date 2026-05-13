@@ -1,0 +1,6 @@
+Task 31: GitHub Actions CI workflow
+Date: Sat May  9 2026
+File: .github/workflows/gst-ci.yml
+Triggers: push/PR to main
+Matrix: Go 1.22, 1.23
+Steps: go vet, go test -cover, go build ./cmd/...

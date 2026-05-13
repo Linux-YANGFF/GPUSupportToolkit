@@ -5,7 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"gst/cmd/gst-server/internal/handlers"
+	"gst/internal/platform"
 )
 
 var (
@@ -21,20 +22,21 @@ var (
 	openBrowser = flag.Bool("browser", true, "Open browser on startup")
 	webDir      = flag.String("web-dir", "web", "Directory containing web files")
 	pidFile     = flag.String("pidfile", "", "PID file path")
+	logLevel    = flag.String("log-level", "info", "Log level: debug, info, warn, error")
 )
 
 var mimeTypes = map[string]string{
-	".html": "text/html; charset=utf-8",
-	".css":  "text/css; charset=utf-8",
-	".js":   "application/javascript; charset=utf-8",
-	".json": "application/json",
-	".png":  "image/png",
-	".jpg":  "image/jpeg",
-	".svg":  "image/svg+xml",
-	".ico":  "image/x-icon",
-	".woff": "font/woff",
+	".html":  "text/html; charset=utf-8",
+	".css":   "text/css; charset=utf-8",
+	".js":    "application/javascript; charset=utf-8",
+	".json":  "application/json",
+	".png":   "image/png",
+	".jpg":   "image/jpeg",
+	".svg":   "image/svg+xml",
+	".ico":   "image/x-icon",
+	".woff":  "font/woff",
 	".woff2": "font/woff2",
-	".ttf":  "font/ttf",
+	".ttf":   "font/ttf",
 }
 
 var srv *http.Server
@@ -42,9 +44,11 @@ var srv *http.Server
 func main() {
 	flag.Parse()
 
+	platform.InitLogger(*logLevel)
+
 	addr := fmt.Sprintf(":%s", *port)
-	log.Printf("GST Server starting on %s", addr)
-	log.Printf("Serving web files from: %s", *webDir)
+	slog.Info("GST Server starting", "addr", addr)
+	slog.Info("Serving web files", "dir", *webDir)
 
 	// Create handler
 	h := handlers.NewHandler()
@@ -56,19 +60,32 @@ func main() {
 	mux.HandleFunc("/api/log/parse", h.ParseLog)
 	mux.HandleFunc("/api/log/frames", h.GetFrames)
 	mux.HandleFunc("/api/log/frames/", func(w http.ResponseWriter, r *http.Request) {
-		// Route /api/log/frames/:id/funcs or /api/log/frames/:id
+		// Route /api/log/frames/:id/{funcs,programs,drawcalls} or /api/log/frames/:id
 		path := strings.TrimSuffix(r.URL.Path, "/")
-		if strings.HasSuffix(path, "/funcs") {
+		switch {
+		case strings.HasSuffix(path, "/funcs"):
 			h.GetFrameFuncs(w, r)
-		} else {
+		case strings.HasSuffix(path, "/programs"):
+			h.GetFramePrograms(w, r)
+		case strings.HasSuffix(path, "/drawcalls"):
+			h.GetFrameDrawCalls(w, r)
+		default:
 			h.GetFrameDetail(w, r)
 		}
 	})
 	mux.HandleFunc("/api/log/search", h.Search)
+	mux.HandleFunc("/api/log/trace/programs", h.GetTracePrograms)
+	mux.HandleFunc("/api/log/trace/programs/", h.GetTraceProgramDetail)
 	mux.HandleFunc("/api/log/analyze/top", h.AnalyzeTop)
 	mux.HandleFunc("/api/log/analyze/shaders", h.AnalyzeShaders)
 	mux.HandleFunc("/api/log/analyze/funcs", h.AnalyzeFuncs)
+	mux.HandleFunc("/api/log/analyze/drawcalls", h.AnalyzeDrawCalls)
+	mux.HandleFunc("/api/log/analyze/textures", h.AnalyzeTextures)
+	mux.HandleFunc("/api/log/analyze/bottleneck", h.AnalyzeBottleneck)
+	mux.HandleFunc("/api/log/analyze/workflow", h.Workflow)
 	mux.HandleFunc("/api/log/export", h.Export)
+	mux.HandleFunc("/api/overview", h.Overview)
+	mux.HandleFunc("/api/diagnose", h.HandleDiagnose)
 	mux.HandleFunc("/api/shutdown", handleShutdown)
 	mux.HandleFunc("/health", h.Health)
 
@@ -79,25 +96,37 @@ func main() {
 	if *openBrowser {
 		go func() {
 			url := fmt.Sprintf("http://localhost:%s", *port)
-			log.Printf("Opening browser at %s", url)
+			slog.Info("Opening browser", "url", url)
 			if err := exec.Command("xdg-open", url).Start(); err != nil {
-				log.Printf("Failed to open browser: %v", err)
+				slog.Warn("Failed to open browser", "error", err)
 			}
 		}()
 	}
 
 	// Write PID file if requested
 	if *pidFile != "" {
+		absPath, err := filepath.Abs(*pidFile)
+		if err != nil {
+			slog.Error("Invalid PID file path", "error", err)
+			os.Exit(1)
+		}
+		if strings.HasPrefix(absPath, "/etc/") || strings.HasPrefix(absPath, "/sys/") ||
+			strings.HasPrefix(absPath, "/proc/") || strings.HasPrefix(absPath, "/dev/") {
+			slog.Error("PID file path not allowed in system directory", "path", absPath)
+			os.Exit(1)
+		}
 		if err := os.WriteFile(*pidFile, []byte(fmt.Sprintf("%d", os.Getpid())), 0644); err != nil {
-			log.Fatalf("Failed to write PID file: %v", err)
+			slog.Error("Failed to write PID file", "path", *pidFile, "error", err)
+			os.Exit(1)
 		}
 	}
 
 	// Start server
 	srv = &http.Server{Addr: addr, Handler: mux}
-	log.Printf("Server ready - visit http://localhost:%s", *port)
+	slog.Info("Server ready", "url", fmt.Sprintf("http://localhost:%s", *port))
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("Server failed: %v", err)
+		slog.Error("Server failed", "error", err)
+		os.Exit(1)
 	}
 }
 
@@ -108,7 +137,7 @@ func handleShutdown(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Println("Shutdown requested via API")
+	slog.Info("Shutdown requested via API")
 	w.Header().Set("Content-Type", "application/json")
 	io.WriteString(w, `{"status":"stopping"}`)
 

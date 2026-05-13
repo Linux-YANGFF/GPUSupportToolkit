@@ -1,0 +1,44 @@
+[146982] (gc=0xfffe6985a840, tid=0x797f6fc0): glXMakeCurrent: dpy = 0x1c002a1400, drawable = 121634855
+[146983] (gc=0xfffe6985a840, tid=0x797f6fc0): glXCreateContextAttribsARB: dpy = 0x1c002a1400, config = 0x8b, share_list = 0
+[146984] (gc=0xfffe6985a840, tid=0x797f6fc0): glGenBuffers 3
+[146985] (gc=0xfffe6985a840, tid=0x797f6fc0): glBindBuffer 0x8892 199
+[146986] (gc=0xfffe6985a840, tid=0x797f6fc0): glBufferData 0x8892 8512 0x7fa1ba6970 0x88e4
+[146987] (gc=0xfffe6985a840, tid=0x797f6fc0): glBindBuffer 0x8893 498
+[146988] (gc=0xfffe6985a840, tid=0x797f6fc0): glVertexAttribPointer 0 3 0x1406 0x0 ptr=(nil)
+[146989] (gc=0xfffe6985a840, tid=0x797f6fc0): glEnableVertexAttribArray 0
+[146990] (gc=0xfffe6985a840, tid=0x797f6fc0): glUseProgram 18
+[146991] (gc=0xfffe6985a840, tid=0x797f6fc0): glUniformMatrix4fv 0 1 0x0 0x7ffc8a1b0
+[146992] (gc=0xfffe6985a840, tid=0x797f6fc0): glBindTexture 0x0de1 42
+[146993] (gc=0xfffe6985a840, tid=0x797f6fc0): glActiveTexture 0x84c0
+[146994] (gc=0xfffe6985a840, tid=0x797f6fc0): glUniform1i 1 0
+[146995] (gc=0xfffe6985a840, tid=0x797f6fc0): glDrawElements 0x0004 2304 0x1403 ptr=(nil)
+[146996] (gc=0xfffe6985a840, tid=0x797f6fc0): glVertexAttribPointer 1 2 0x1406 0x0 ptr=(nil)
+[146997] (gc=0xfffe6985a840, tid=0x797f6fc0): glEnableVertexAttribArray 1
+[146998] ERROR!!! __glSetError (gl_error=0x0500, errno=0, msg=(nil))
+[146999] (gc=0xfffe6985a840, tid=0x797f6fc0): glFlush
+[147000] (gc=0xfffe6985a840, tid=0x797f6fc0): glXSwapBuffers: dpy = 0x1c002a1400, drawable = 121634855
+[147001] (gc=0xfffe6985a840, tid=0x797f6fc0): glXMakeCurrent: dpy = 0x1c002a1400, drawable = 121634855
+[147002] (gc=0xfffe6985a840, tid=0x797f6fc0): glClear 0x4100
+[147003] (gc=0xfffe6985a840, tid=0x797f6fc0): glClearColor 0.2 0.3 0.4 1.0
+[147004] (gc=0xfffe6985a840, tid=0x797f6fc0): glGenTextures 1 0x7ffc8a1b0
+[147005] (gc=0xfffe6985a840, tid=0x797f6fc0): glBindTexture 0x0de1 99
+[147006] DANGER: no VBO bound before glVertexAttribPointer with ptr=(nil)
+[147007] (gc=0xfffe6985a840, tid=0x797f6fc0): glVertexAttribPointer 3 4 0x1406 0x0 ptr=(nil)
+[147008] (gc=0xfffe6985a840, tid=0x797f6fc0): glEnableVertexAttribArray 3
+[147009] (gc=0xfffe6985a840, tid=0x797f6fc0): glUseProgram 22
+[147010] (gc=0xfffe6985a840, tid=0x797f6fc0): glDrawArrays 0x0005 0 4
+[147011] ERROR!!! __glSetError (gl_error=0x0501, errno=22, msg=(nil))
+[147012] (gc=0xfffe6985a840, tid=0x797f6fc0): glFlush
+[147013] 段错误 (SIGSEGV) (core dumped)
+[147014] (gc=0xfffe6985a840, tid=0x797f6fc0): glTexImage2D 0x0de1 0 0x1908 1920 1080 0 0x80e1 0x1401 ptr=(nil)
+[147015] (gc=0xfffe6985a840, tid=0x797f6fc0): glTexParameteri 0x0de1 0x2802 0x2901
+[147016] (gc=0xfffe6985a840, tid=0x797f6fc0): glTexParameteri 0x0de1 0x2803 0x2901
+[147017] (gc=0xfffe6985a840, tid=0x797f6fc0): glBindFramebuffer 0x8d40 0
+[147018] (gc=0xfffe6985a840, tid=0x797f6fc0): glFramebufferTexture2D 0x8d40 0x8ce0 0x0de1 99 0
+[147019] (gc=0xfffe6985a840, tid=0x797f6fc0): glDrawBuffers 1 0x7ffc8a1b0
+[147020] (gc=0xfffe6985a840, tid=0x797f6fc0): glClear 0x4100
+[147021] (gc=0xfffe6985a840, tid=0x797f6fc0): glBindFramebuffer 0x8d40 0
+[147022] (gc=0xfffe6985a840, tid=0x797f6fc0): glXSwapBuffers: dpy = 0x1c002a1400, drawable = 121634855
+[147023] (gc=0xfffe6985a840, tid=0x797f6fc0): glDeleteTextures 1 0x7ffc8a1b0
+[147024] (gc=0xfffe6985a840, tid=0x797f6fc0): glDeleteBuffers 3 0x7ffc8a1b0
+[147025] 38 frame cost 110ms

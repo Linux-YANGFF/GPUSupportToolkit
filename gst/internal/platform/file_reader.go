@@ -2,13 +2,15 @@ package platform
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"regexp"
 )
+
+const StreamBufferSize = 64 * 1024 * 1024
 
 // LogIndex 日志索引结构
 type LogIndex struct {
@@ -27,55 +29,17 @@ type StreamReader struct {
 	filePath string
 }
 
-// BOM signatures
-var (
-	UTF8BOM    = []byte{0xEF, 0xBB, 0xBF}
-	UTF16LEBOM = []byte{0xFF, 0xFE}
-	UTF16BEBOM = []byte{0xFE, 0xFF}
-)
-
-// DetectEncoding 检测文件编码
-func DetectEncoding(firstBytes []byte) string {
-	if len(firstBytes) < 3 {
-		return "utf-8"
-	}
-	if bytes.HasPrefix(firstBytes, UTF8BOM) {
-		return "utf-8"
-	}
-	if bytes.HasPrefix(firstBytes, UTF16LEBOM) {
-		return "utf-16-le"
-	}
-	if bytes.HasPrefix(firstBytes, UTF16BEBOM) {
-		return "utf-16-be"
-	}
-	// For logs without BOM, default to UTF-8
-	// Note: GBK support was removed as convertLine does not implement it
-	return "utf-8"
-}
-
 // NewStreamReader 创建流式读取器
 func NewStreamReader(filePath string) (*StreamReader, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to open file %s: %w", filePath, err)
 	}
 
 	stat, err := file.Stat()
 	if err != nil {
 		file.Close()
-		return nil, err
-	}
-
-	// Read first bytes for BOM detection
-	firstBytes := make([]byte, 64)
-	n, err := file.Read(firstBytes)
-	if err != nil {
-		file.Close()
-		return nil, err
-	}
-	if n > 0 {
-		// Seek back to beginning
-		file.Seek(0, io.SeekStart)
+		return nil, fmt.Errorf("failed to stat file %s: %w", filePath, err)
 	}
 
 	sr := &StreamReader{
@@ -101,7 +65,6 @@ func (sr *StreamReader) ReadLines() <-chan string {
 // ReadLinesWithProgress 带进度回调的行读取
 func (sr *StreamReader) ReadLinesWithProgress(onProgress func(float64)) <-chan string {
 	ch := make(chan string, 1000)
-	encoding := sr.detectEncoding()
 
 	go func() {
 		defer close(ch)
@@ -110,17 +73,14 @@ func (sr *StreamReader) ReadLinesWithProgress(onProgress func(float64)) <-chan s
 		scanner := bufio.NewScanner(sr.reader)
 
 		// Set larger buffer for large log lines (64MB max)
-		maxCapacity := 64 * 1024 * 1024
-		buf := make([]byte, maxCapacity)
-		scanner.Buffer(buf, maxCapacity)
+		buf := make([]byte, StreamBufferSize)
+		scanner.Buffer(buf, StreamBufferSize)
 
 		readBytes := int64(0)
 		for scanner.Scan() {
 			lineNum++
 			line := scanner.Bytes()
-
-			// Convert encoding if needed
-			text := sr.convertLine(line, encoding)
+			text := string(line)
 			readBytes += int64(len(line))
 
 			if onProgress != nil && sr.fileSize > 0 {
@@ -135,24 +95,6 @@ func (sr *StreamReader) ReadLinesWithProgress(onProgress func(float64)) <-chan s
 	return ch
 }
 
-// detectEncoding 检测文件编码
-func (sr *StreamReader) detectEncoding() string {
-	firstBytes := make([]byte, 64)
-	n, err := sr.file.Read(firstBytes)
-	if err != nil {
-		return "utf-8"
-	}
-	sr.file.Seek(0, io.SeekStart)
-	return DetectEncoding(firstBytes[:n])
-}
-
-// convertLine 转换行编码
-func (sr *StreamReader) convertLine(line []byte, encoding string) string {
-	// Currently only UTF-8 is supported. GBK detection was removed since
-	// encoding conversion was not implemented.
-	return string(line)
-}
-
 // SeekToLine 跳转到指定行（通过重新打开文件并跳过行）
 func (sr *StreamReader) SeekToLine(lineNum int) error {
 	sr.file.Seek(0, io.SeekStart)
@@ -161,9 +103,8 @@ func (sr *StreamReader) SeekToLine(lineNum int) error {
 	lineCount := 0
 	scanner := bufio.NewScanner(sr.reader)
 
-	maxCapacity := 64 * 1024 * 1024
-	buf := make([]byte, maxCapacity)
-	scanner.Buffer(buf, maxCapacity)
+	buf := make([]byte, StreamBufferSize)
+	scanner.Buffer(buf, StreamBufferSize)
 
 	for scanner.Scan() {
 		lineCount++
