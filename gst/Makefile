@@ -1,25 +1,29 @@
-.PHONY: dev build build-cli build-all test lint clean help deb rpm package
+.PHONY: dev build build-cli build-server build-web build-all test lint clean help deb deb-amd64 deb-arm64 rpm rpm-amd64 rpm-arm64 package package-all
 
 # Go parameters
-GOCMD = go
-GOBUILD = $(GOCMD) build
-GOTEST = $(GOCMD) test
-GOMOD = $(GOCMD) mod
-GOVET = $(GOCMD) vet
-GOFMT = $(GOCMD) fmt
+GOCMD ?= $(or $(wildcard /usr/local/go/bin/go),go)
+GOBUILD ?= $(GOCMD) build
+GOTEST ?= $(GOCMD) test
+GOMOD ?= $(GOCMD) mod
+GOVET ?= $(GOCMD) vet
+GOFMT ?= $(GOCMD) fmt
+NPM ?= npm
+GOCACHE ?= /tmp/gst-go-build
 
 # Binary names
-GUI_BINARY = gst
+SERVER_BINARY = gst-server
 CLI_BINARY = gst-cli
-ALL_BINARIES = $(GUI_BINARY) $(CLI_BINARY)
+INSTALL_CLI = gst
+ALL_BINARIES = $(SERVER_BINARY) $(CLI_BINARY)
 
 # Build directories
 BIN_DIR = bin
-GUI_BINARY_PATH = $(BIN_DIR)/$(GUI_BINARY)
+SERVER_BINARY_PATH = $(BIN_DIR)/$(SERVER_BINARY)
 CLI_BINARY_PATH = $(BIN_DIR)/$(CLI_BINARY)
+WEB_DIST = web/dist
 
 # Source directories
-GUI_CMD = ./cmd/gst
+SERVER_CMD = ./cmd/gst-server
 CLI_CMD = ./cmd/cli
 
 # Architecture support
@@ -34,16 +38,20 @@ endif
 
 # Cross-compilation targets
 TARGETS = linux-amd64 linux-arm64
+SUPPORTED_PACKAGE_ARCHES = amd64 arm64
+PACKAGE_ARCH ?= $(TARGET_ARCH)
+RPM_ARCH = $(if $(filter arm64,$(PACKAGE_ARCH)),aarch64,x86_64)
 
 # Help text
 help:
 	@echo "GST (GPU Support Toolkit) Build System"
 	@echo ""
 	@echo "Usage:"
-	@echo "  make dev          Run GUI in development mode"
-	@echo "  make build        Build GUI binary"
+	@echo "  make dev          Run server in development mode"
+	@echo "  make build        Build gst-server binary"
 	@echo "  make build-cli    Build CLI binary"
-	@echo "  make build-all    Build both GUI and CLI binaries"
+	@echo "  make build-web    Build web assets"
+	@echo "  make build-all    Build web assets, gst-server, and gst-cli"
 	@echo "  make test         Run all tests"
 	@echo "  make test-core    Run core module tests only"
 	@echo "  make lint         Run code linting"
@@ -52,51 +60,52 @@ help:
 	@echo "  make clean        Clean build artifacts"
 	@echo "  make deps         Download and tidy dependencies"
 	@echo "  make cross        Cross-compile for multiple architectures"
-	@echo "  make deb          Build deb package"
-	@echo "  make rpm          Build rpm package"
-	@echo "  make package      Build both deb and rpm packages"
+	@echo "  make deb          Build deb package for current arch"
+	@echo "  make deb-amd64    Build amd64 deb package"
+	@echo "  make deb-arm64    Build arm64 deb package"
+	@echo "  make rpm          Build rpm package for current arch (requires rpmbuild)"
+	@echo "  make rpm-amd64    Build x86_64 rpm package (requires rpmbuild)"
+	@echo "  make rpm-arm64    Build aarch64 rpm package (requires rpmbuild)"
+	@echo "  make package      Build deb and rpm for current arch"
+	@echo "  make package-all  Build deb/rpm for amd64 and arm64"
 	@echo ""
 	@echo "Environment variables:"
-	@echo "  CGO_ENABLED       Set to 1 for GUI builds (default: 1)"
-	@echo "  ARCH              Target architecture (auto-detected)"
+	@echo "  GOCMD             Go command (default: /usr/local/go/bin/go when present)"
+	@echo "  GOCACHE           Go build cache (default: /tmp/gst-go-build)"
+	@echo "  PACKAGE_ARCH      Target package arch: amd64 or arm64"
 	@echo ""
 
-# Development mode - runs GUI directly
+# Development mode - runs server directly
 dev:
-	@echo "Starting GST GUI in development mode..."
-	@echo "Note: Requires X11/Wayland display and CGO dependencies"
-	CGO_ENABLED=1 $(GOCMD) run $(GUI_CMD)
+	@echo "Starting GST server in development mode..."
+	GOCACHE=$(GOCACHE) CGO_ENABLED=0 $(GOCMD) run $(SERVER_CMD) -browser=false -web-dir $(WEB_DIST)
 
-# Build GUI binary
-build: $(GUI_BINARY_PATH)
+# Build server binary
+build: build-server
 
-$(GUI_BINARY_PATH): $(GUI_CMD)/*.go
-	@echo "Building GUI binary..."
-	CGO_ENABLED=1 $(GOBUILD) -o $(GUI_BINARY_PATH) $(GUI_CMD)
-	@echo "GUI binary built: $(GUI_BINARY_PATH)"
+build-server: $(SERVER_BINARY_PATH)
+
+$(SERVER_BINARY_PATH): $(SERVER_CMD)/*.go
+	@echo "Building gst-server binary..."
+	GOCACHE=$(GOCACHE) CGO_ENABLED=0 $(GOBUILD) -o $(SERVER_BINARY_PATH) $(SERVER_CMD)
+	@echo "Server binary built: $(SERVER_BINARY_PATH)"
 
 # Build CLI binary
 build-cli: $(CLI_BINARY_PATH)
 
 $(CLI_BINARY_PATH): $(CLI_CMD)/*.go
 	@echo "Building CLI binary..."
-	CGO_ENABLED=0 $(GOBUILD) -o $(CLI_BINARY_PATH) $(CLI_CMD)
+	GOCACHE=$(GOCACHE) CGO_ENABLED=0 $(GOBUILD) -o $(CLI_BINARY_PATH) $(CLI_CMD)
 	@echo "CLI binary built: $(CLI_BINARY_PATH)"
 
-# Build gst-server binary
-SERVER_BINARY_PATH = $(BIN_DIR)/gst-server
-SERVER_CMD = ./cmd/gst-server
+# Build frontend assets
+build-web:
+	@echo "Building web assets..."
+	$(NPM) --prefix web run build
 
-build-server: $(SERVER_BINARY_PATH)
-
-$(SERVER_BINARY_PATH): $(SERVER_CMD)/*.go
-	@echo "Building gst-server binary..."
-	CGO_ENABLED=0 $(GOBUILD) -o $(SERVER_BINARY_PATH) $(SERVER_CMD)
-	@echo "Server binary built: $(SERVER_BINARY_PATH)"
-
-# Build both GUI and CLI
-build-all: build build-cli
-	@echo "All binaries built successfully"
+# Build web, server, and CLI
+build-all: build-web build-server build-cli
+	@echo "All artifacts built successfully"
 	@ls -la $(BIN_DIR)/
 
 # Clean build artifacts
@@ -108,17 +117,17 @@ clean:
 # Run all tests
 test:
 	@echo "Running all tests..."
-	$(GOTEST) -v ./...
+	GOCACHE=$(GOCACHE) $(GOTEST) -v ./...
 
 # Run core module tests only
 test-core:
 	@echo "Running core module tests..."
-	$(GOTEST) -v ./internal/core/...
+	GOCACHE=$(GOCACHE) $(GOTEST) -v ./internal/core/...
 
 # Run tests with coverage
 test-cover:
 	@echo "Running tests with coverage..."
-	$(GOTEST) -v -coverprofile=coverage.out ./...
+	GOCACHE=$(GOCACHE) $(GOTEST) -v -coverprofile=coverage.out ./...
 	$(GOCMD) tool cover -html=coverage.out -o coverage.html
 
 # Download and tidy dependencies
@@ -136,7 +145,7 @@ fmt:
 # Run go vet
 vet:
 	@echo "Running go vet..."
-	$(GOVET) ./...
+	GOCACHE=$(GOCACHE) $(GOVET) ./...
 
 # Run linting
 lint:
@@ -148,20 +157,20 @@ cross: cross-linux-amd64 cross-linux-arm64
 
 cross-linux-amd64:
 	@echo "Cross-compiling for Linux amd64..."
-	CGO_ENABLED=1 $(GOBUILD) -o $(BIN_DIR)/$(GUI_BINARY)-linux-amd64 $(GUI_CMD)
-	CGO_ENABLED=0 $(GOBUILD) -o $(BIN_DIR)/$(CLI_BINARY)-linux-amd64 $(CLI_CMD)
+	GOCACHE=$(GOCACHE) CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GOBUILD) -o $(BIN_DIR)/$(SERVER_BINARY)-linux-amd64 $(SERVER_CMD)
+	GOCACHE=$(GOCACHE) CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GOBUILD) -o $(BIN_DIR)/$(CLI_BINARY)-linux-amd64 $(CLI_CMD)
 	@echo "Linux amd64 binaries built"
 
 cross-linux-arm64:
 	@echo "Cross-compiling for Linux arm64..."
-	CGO_ENABLED=1 GOOS=linux GOARCH=arm64 $(GOBUILD) -o $(BIN_DIR)/$(GUI_BINARY)-linux-arm64 $(GUI_CMD)
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GOBUILD) -o $(BIN_DIR)/$(CLI_BINARY)-linux-arm64 $(CLI_CMD)
+	GOCACHE=$(GOCACHE) CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GOBUILD) -o $(BIN_DIR)/$(SERVER_BINARY)-linux-arm64 $(SERVER_CMD)
+	GOCACHE=$(GOCACHE) CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GOBUILD) -o $(BIN_DIR)/$(CLI_BINARY)-linux-arm64 $(CLI_CMD)
 	@echo "Linux arm64 binaries built"
 
 # Build with specific architecture
 build-arch:
 	@echo "Building for $(TARGET_ARCH)..."
-	CGO_ENABLED=1 $(GOBUILD) -o $(GUI_BINARY_PATH) $(GUI_CMD)
+	GOCACHE=$(GOCACHE) CGO_ENABLED=0 GOOS=linux GOARCH=$(TARGET_ARCH) $(GOBUILD) -o $(SERVER_BINARY_PATH) $(SERVER_CMD)
 
 # Verify build environment
 check-env:
@@ -170,92 +179,71 @@ check-env:
 	@echo "Architecture: $(ARCH) -> Target: $(TARGET_ARCH)"
 	@echo "CGO_ENABLED: $(CGO_ENABLED)"
 
-# Build all packages (deb and rpm)
+# Build packages for current arch
 package: deb rpm
 	@echo "All packages built successfully"
 	@echo "Packages:"
 	@ls -la bin/gst-*.deb bin/gst-*.rpm 2>/dev/null || ls -la bin/gst-*.deb 2>/dev/null
 
-# Build deb package using fpm
-package-deb: build-server
-	@echo "Building deb package using fpm..."
-	@mkdir -p bin
-	fpm -s dir -t deb \
-		-n gst \
-		-v $(VERSION) \
-		-a $(ARCH) \
-		-p bin/gst_$(VERSION)_$(ARCH).deb \
-		--prefix=/usr \
-		-f bin/gst-server=/usr/bin/gst-server \
-		--directories /var/lib/gst \
-		--post-install packaging/deb/DEBIAN/postinst \
-		--pre-remove packaging/deb/DEBIAN/prerm \
-		packaging/deb/usr/share/applications/gst.desktop=/usr/share/applications/gst.desktop
-	@echo "Deb package built: bin/gst_$(VERSION)_$(ARCH).deb"
-
-# Build rpm package using fpm
-package-rpm: build-server
-	@echo "Building rpm package using fpm..."
-	@mkdir -p bin
-	fpm -s dir -t rpm \
-		-n gst \
-		-v $(VERSION) \
-		-a $(ARCH) \
-		-p bin/gst_$(VERSION)_$(ARCH).rpm \
-		--prefix=/usr \
-		-f bin/gst-server=/usr/bin/gst-server \
-		--directories /var/lib/gst
-	@echo "RPM package built: bin/gst_$(VERSION)_$(ARCH).rpm"
-
 # Version from VERSION file or git tag
 VERSION ?= $(shell cat VERSION 2>/dev/null || git describe --tags --abbrev=0 2>/dev/null || echo "1.0.0")
 
-# Architecture mapping (uname -m -> deb/rpm arch names)
-ARCH ?= $(shell uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+define stage_package
+	rm -rf bin/pkg-$(1) && \
+	mkdir -p bin/pkg-$(1)/usr/bin bin/pkg-$(1)/usr/share/applications bin/pkg-$(1)/usr/share/gst/web bin/pkg-$(1)/DEBIAN bin/pkg-$(1)/var/lib/gst && \
+	cp bin/$(SERVER_BINARY)-linux-$(1) bin/pkg-$(1)/usr/bin/$(SERVER_BINARY) && \
+	cp bin/$(CLI_BINARY)-linux-$(1) bin/pkg-$(1)/usr/bin/$(INSTALL_CLI) && \
+	cp -r $(WEB_DIST)/* bin/pkg-$(1)/usr/share/gst/web/ && \
+	cp packaging/deb/DEBIAN/postinst bin/pkg-$(1)/DEBIAN/postinst && \
+	cp packaging/deb/DEBIAN/prerm bin/pkg-$(1)/DEBIAN/prerm && \
+	cp packaging/deb/usr/share/applications/* bin/pkg-$(1)/usr/share/applications/ && \
+	chmod 755 bin/pkg-$(1)/DEBIAN/postinst bin/pkg-$(1)/DEBIAN/prerm
+endef
 
-# Legacy deb target (uses dpkg-deb)
-deb: build-server build-cli
-	@echo "Building deb package (version $(VERSION), arch $(ARCH))..."
-	@mkdir -p bin/deb/usr/bin
-	@mkdir -p bin/deb/DEBIAN
-	@mkdir -p "bin/deb/usr/share/applications"
-	@mkdir -p "bin/deb/usr/share/gst/web"
-	cp bin/gst-server bin/deb/usr/bin/gst-server
-	cp bin/gst-cli bin/deb/usr/bin/gst
-	cp -r web/* bin/deb/usr/share/gst/web/
-	cp packaging/deb/DEBIAN/* bin/deb/DEBIAN/
-	cp packaging/deb/usr/share/applications/* bin/deb/usr/share/applications/
-	chmod 755 bin/deb/DEBIAN/postinst bin/deb/DEBIAN/prerm
-	cd bin/deb && dpkg-deb --build . ../gst-$(VERSION)-$(ARCH).deb
-	@echo "Deb package built: bin/gst-$(VERSION)-$(ARCH).deb"
-
-# ARM64 deb package
-deb-arm64:
-	@echo "Cross-compiling for Linux arm64..."
+bin/$(SERVER_BINARY)-linux-%: $(SERVER_CMD)/*.go
+	@echo "Cross-compiling gst-server for Linux $*..."
 	@mkdir -p bin
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GOBUILD) -o bin/gst-server-linux-arm64 $(SERVER_CMD)
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GOBUILD) -o bin/gst-cli-linux-arm64 $(CLI_CMD)
-	@echo "Building ARM64 deb package..."
-	@mkdir -p bin/deb-arm64/usr/bin
-	@mkdir -p bin/deb-arm64/DEBIAN
-	@mkdir -p "bin/deb-arm64/usr/share/applications"
-	@mkdir -p "bin/deb-arm64/usr/share/gst/web"
-	cp bin/gst-server-linux-arm64 bin/deb-arm64/usr/bin/gst-server
-	cp bin/gst-cli-linux-arm64 bin/deb-arm64/usr/bin/gst
-	cp -r web/* bin/deb-arm64/usr/share/gst/web/
-	cp packaging/deb/DEBIAN/* bin/deb-arm64/DEBIAN/
-	cp packaging/deb/usr/share/applications/* bin/deb-arm64/usr/share/applications/
-	chmod 755 bin/deb-arm64/DEBIAN/postinst bin/deb-arm64/DEBIAN/prerm
-	cd bin/deb-arm64 && dpkg-deb --build . ../gst-$(VERSION)-arm64.deb
-	@echo "ARM64 deb package built: bin/gst-$(VERSION)-arm64.deb"
+	GOCACHE=$(GOCACHE) CGO_ENABLED=0 GOOS=linux GOARCH=$* $(GOBUILD) -o $@ $(SERVER_CMD)
 
-# Legacy rpm target (uses rpmbuild)
-rpm: build-server
-	@echo "Building rpm package..."
-	@mkdir -p bin/rpm BUILD RPMS/x86_64
-	rpmbuild --define "_topdir $(shell pwd)/bin/rpm" -bb packaging/rpm/gst.spec
-	@mv bin/rpm/RPMS/x86_64/*.rpm bin/gst-1.0.0.x86_64.rpm 2>/dev/null || echo "RPM built in bin/rpm/RPMS/x86_64/"
-	@echo "RPM package built"
+bin/$(CLI_BINARY)-linux-%: $(CLI_CMD)/*.go
+	@echo "Cross-compiling gst-cli for Linux $*..."
+	@mkdir -p bin
+	GOCACHE=$(GOCACHE) CGO_ENABLED=0 GOOS=linux GOARCH=$* $(GOBUILD) -o $@ $(CLI_CMD)
+
+deb: PACKAGE_ARCH := $(PACKAGE_ARCH)
+deb: build-web bin/$(SERVER_BINARY)-linux-$(PACKAGE_ARCH) bin/$(CLI_BINARY)-linux-$(PACKAGE_ARCH)
+	@echo "Building deb package (version $(VERSION), arch $(PACKAGE_ARCH))..."
+	@$(call stage_package,$(PACKAGE_ARCH))
+	@printf "Package: gst\nVersion: $(VERSION)\nSection: utils\nPriority: optional\nArchitecture: $(PACKAGE_ARCH)\nDepends: libc6\nMaintainer: GST Team\nDescription: GPU Support Toolkit - GPU log analysis tool\n A tool for analyzing apitrace/profile/rawtrace logs.\n" > bin/pkg-$(PACKAGE_ARCH)/DEBIAN/control
+	dpkg-deb --build bin/pkg-$(PACKAGE_ARCH) bin/gst-$(VERSION)-$(PACKAGE_ARCH).deb
+	@echo "Deb package built: bin/gst-$(VERSION)-$(PACKAGE_ARCH).deb"
+
+deb-amd64:
+	$(MAKE) deb PACKAGE_ARCH=amd64
+
+deb-arm64:
+	$(MAKE) deb PACKAGE_ARCH=arm64
+
+rpm: PACKAGE_ARCH := $(PACKAGE_ARCH)
+rpm: build-web bin/$(SERVER_BINARY)-linux-$(PACKAGE_ARCH) bin/$(CLI_BINARY)-linux-$(PACKAGE_ARCH)
+	@command -v rpmbuild >/dev/null 2>&1 || { echo "rpmbuild is required for rpm packaging. Install rpm-build or use a packaging container."; exit 127; }
+	@echo "Building rpm package (version $(VERSION), arch $(RPM_ARCH))..."
+	@$(call stage_package,$(PACKAGE_ARCH))
+	@rm -rf bin/rpm-$(PACKAGE_ARCH)
+	@mkdir -p bin/rpm-$(PACKAGE_ARCH)/BUILD bin/rpm-$(PACKAGE_ARCH)/BUILDROOT bin/rpm-$(PACKAGE_ARCH)/RPMS bin/rpm-$(PACKAGE_ARCH)/SOURCES bin/rpm-$(PACKAGE_ARCH)/SPECS bin/rpm-$(PACKAGE_ARCH)/SRPMS
+	@tar -C bin/pkg-$(PACKAGE_ARCH) -czf bin/rpm-$(PACKAGE_ARCH)/SOURCES/gst-$(VERSION).tar.gz .
+	rpmbuild --target $(RPM_ARCH) --define "_topdir $(shell pwd)/bin/rpm-$(PACKAGE_ARCH)" --define "pkg_version $(VERSION)" -bb packaging/rpm/gst.spec
+	@find bin/rpm-$(PACKAGE_ARCH)/RPMS -name '*.rpm' -exec cp {} bin/ \;
+	@echo "RPM package built under bin/"
+
+rpm-amd64:
+	$(MAKE) rpm PACKAGE_ARCH=amd64
+
+rpm-arm64:
+	$(MAKE) rpm PACKAGE_ARCH=arm64
+
+package-all: deb-amd64 deb-arm64 rpm-amd64 rpm-arm64
+	@echo "All amd64/arm64 deb/rpm package targets completed"
 
 # Full build check - verifies everything compiles
 check: check-env deps vet fmt build-all

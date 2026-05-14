@@ -10,6 +10,12 @@ export interface FrameData {
   api_ms: number | null
   other_ms: number | null
   api_count: number
+  draw_call_count: number
+  has_timing: boolean
+  timing_source: string
+  stats_source?: string
+  category_stats?: CategoryCounter[]
+  key_apis?: ApiCounter[]
 }
 
 export interface ApiCall {
@@ -23,6 +29,52 @@ export interface ApiCall {
   is_error?: boolean
   error_code?: string
   has_nil_ptr?: boolean
+  category?: string
+  category_label?: string
+  family?: string
+  key?: string
+  source?: string
+}
+
+export interface ApiCounter {
+  api_name: string
+  category: string
+  label: string
+  family: string
+  key?: string
+  count: number
+  time_us: number
+  avg_time_us: number
+  source: string
+  has_timing: boolean
+  raw_sequence?: number
+}
+
+export interface CategoryCounter {
+  category: string
+  label: string
+  count: number
+  time_us: number
+  avg_time_us: number
+  top_apis: ApiCounter[]
+}
+
+export interface FrameOpenGLStats {
+  frame_num: number
+  start_line: number
+  end_line: number
+  total_time_us: number
+  swap_buffer_time_us: number
+  api_total_time_us: number
+  api_call_count: number
+  raw_api_call_count: number
+  draw_call_count: number
+  has_timing: boolean
+  timing_source: string
+  stats_source: string
+  category_stats: CategoryCounter[]
+  key_apis: ApiCounter[]
+  top_apis: ApiCounter[]
 }
 
 export interface FuncStat {
@@ -34,6 +86,11 @@ export interface FuncStat {
 
 export interface ShaderStat {
   id: number
+  kind?: 'source' | 'api_stat'
+  api_name?: string
+  count?: number
+  time_us?: number
+  avg_time_us?: number
   source: string
   command_line?: string
   expanded: boolean
@@ -47,10 +104,14 @@ export interface FrameDetail {
   swap_buffer_time_us: number
   api_total_time_us: number
   api_count: number
+  draw_call_count: number
+  has_timing: boolean
+  timing_source: string
   api_calls: ApiCall[]
   func_stats: FuncStat[]
   shaders: ShaderStat[]
   programs: number[]
+  stats: FrameOpenGLStats
 }
 
 export interface ShaderObjectInfo {
@@ -87,6 +148,7 @@ export interface ProgramUsage {
   source_type: 'source' | 'program_binary' | 'unknown'
   confidence: 'high' | 'medium' | 'low'
   shader_ids: number[]
+  shaders?: ShaderObjectInfo[]
   draw_call_count: number
   use_count: number
   first_line?: number
@@ -106,12 +168,16 @@ export interface FrameProgramInsight {
   frame_num: number
   start_line: number
   end_line: number
+  has_timing: boolean
+  total_time_us: number
+  api_call_count: number
   total_draw_calls: number
   programs: ProgramUsage[]
   segments: ProgramSegment[]
 }
 
 export interface DrawCallInsight {
+  index: number
   line_num: number
   api_name: string
   draw_type: string
@@ -135,6 +201,25 @@ export interface FrameDrawCallPage {
   page_size: number
 }
 
+export interface FrameAPICallPage {
+  frame_num: number
+  api_calls: ApiCall[]
+  total: number
+  page: number
+  page_size: number
+}
+
+export interface FrameRawLinesPage {
+  frame_num: number
+  lines: string[]
+  total: number
+  page: number
+  page_size: number
+  start_line: number
+  end_line: number
+  stripped_line_number: boolean
+}
+
 export interface TraceProgramsResponse {
   programs: ProgramInfo[]
   total: number
@@ -146,6 +231,7 @@ export interface ParseResult {
   fps: number
   max_frame_time: number
   total_time_us: number
+  has_timing: boolean
 }
 
 export interface SearchResultItem {
@@ -214,6 +300,12 @@ export interface FrameSummaryResponse {
   swap_buffer_time_us: number
   api_total_time_us: number
   api_count: number
+  draw_call_count: number
+  has_timing: boolean
+  timing_source: string
+  stats_source?: string
+  category_stats?: CategoryCounter[]
+  key_apis?: ApiCounter[]
 }
 
 export interface DrawCallStats {
@@ -225,11 +317,13 @@ export interface DrawCallStats {
   indirect_count: number
   compute_count: number
   time_us: number
+  has_timing: boolean
 }
 
 export interface DrawCallSummary {
   total_draw_calls: number
   draw_calls_per_frame_avg: number
+  has_timing: boolean
   by_type: Record<string, number>
   frames: DrawCallStats[]
 }
@@ -244,22 +338,29 @@ export interface TextureInfo {
   bound: boolean
   deleted: boolean
   frame_num?: number
+  create_line?: number
+  last_bind_line?: number
+  source?: string
+  bind_count: number
 }
 
 export interface TextureSummary {
   total_textures: number
   active_textures: number
+  inferred_count: number
   leaked_textures: TextureInfo[]
   by_target: Record<string, number>
 }
 
 export interface BottleneckAnalysis {
-  type: 'cpu_bound' | 'gpu_bound' | 'balanced' | 'unstable'
+  type: 'cpu_bound' | 'gpu_bound' | 'balanced' | 'unstable' | 'unknown'
+  has_timing: boolean
   confidence: number
   swap_ratio: number
   api_ratio: number
   stability: number
   top_bottleneck: string
+  details?: string
 }
 
 export interface WorkflowResult {

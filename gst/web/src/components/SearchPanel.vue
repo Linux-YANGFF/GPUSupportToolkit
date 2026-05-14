@@ -4,7 +4,7 @@ import { inject } from 'vue'
 const ctx = inject<any>('ctx')
 if (!ctx) throw new Error('Missing provide ctx')
 
-const { searchKeyword, searchResults, searching, searched } = ctx
+const { searchKeyword, searchResults, searchTotal, searching, searched } = ctx
 const { searchCurrentPage, searchTotalPages, paginatedSearchResults, searchPageRange } = ctx
 const { doSearch, goSearchPage } = ctx
 </script>
@@ -36,7 +36,7 @@ const { doSearch, goSearchPage } = ctx
 
     <div v-if="searchResults.length > 0" class="pagination">
       <div class="pagination-info">
-        第 {{ searchCurrentPage }} / {{ searchTotalPages }} 页，共 {{ searchResults.length }} 条结果
+        第 {{ searchCurrentPage }} / {{ searchTotalPages }} 页，共 {{ searchTotal.toLocaleString() }} 条结果
       </div>
       <div class="pagination-controls">
         <button class="page-btn" @click="goSearchPage(searchCurrentPage - 1)" :disabled="searchCurrentPage <= 1" title="上一页">

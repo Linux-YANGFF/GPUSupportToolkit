@@ -11,6 +11,7 @@ const {
   traceLoading,
   traceProgramSummary,
   selectedTraceFrame,
+  traceFrameJump,
   frameProgramInsight,
   traceDrawCalls,
   traceDrawCallPage,
@@ -23,6 +24,7 @@ const {
 
 const {
   selectTraceFrame,
+  selectTraceFrameById,
   loadTraceDrawCalls,
   filterTraceProgram,
   loadTraceProgramDetail,
@@ -64,8 +66,29 @@ function shaderIdsText(ids: number[]): string {
   return ids.length ? ids.map((id: number) => `#${id}`).join(', ') : '—'
 }
 
+function shaderStack(program: { shaders?: ShaderObjectInfo[]; shader_ids?: number[] }): string {
+  const shaders = program.shaders || []
+  if (shaders.length) {
+    return shaders.map((shader: ShaderObjectInfo) => `#${shader.id} ${shader.type}`).join(' / ')
+  }
+  return shaderIdsText(program.shader_ids || [])
+}
+
 function frameDuration(frame: FrameData): string {
+  if (!frame.has_timing) return '—'
   return frame.duration_ms != null ? frame.duration_ms.toFixed(3) : '—'
+}
+
+function frameTimingText(): string {
+  if (!selectedTraceFrame.value) return '—'
+  if (!selectedTraceFrame.value.has_timing) return '无耗时数据'
+  return `${frameDuration(selectedTraceFrame.value)} ms`
+}
+
+function programDrawShare(draws: number): string {
+  const total = frameProgramInsight.value?.total_draw_calls || 0
+  if (!total) return '0%'
+  return `${Math.round((draws / total) * 100)}%`
 }
 
 function textureText(draw: DrawCallInsight): string {
@@ -80,7 +103,7 @@ function textureText(draw: DrawCallInsight): string {
     <div class="trace-toolbar">
       <div>
         <h3>Trace Inspector</h3>
-        <p>基于日志静态重建每帧 Program、Shader、DrawCall 和关键 GL 状态。</p>
+        <p>按帧重建 Program、Shader、DrawCall 和关键 GL 状态；耗时只展示日志中真实存在的数据。</p>
       </div>
       <div class="trace-kpis">
         <span><strong>{{ traceProgramSummary.total }}</strong> Programs</span>
@@ -95,15 +118,21 @@ function textureText(draw: DrawCallInsight): string {
     <div class="trace-layout">
       <aside class="trace-rail">
         <div class="trace-panel-title">帧 / Frames</div>
-        <button
-          v-for="frame in frames.slice(0, 80)"
-          :key="frame.id"
-          :class="['trace-frame-row', { active: selectedTraceFrame && selectedTraceFrame.id === frame.id }]"
-          @click="selectTraceFrame(frame)"
-        >
-          <span>#{{ frame.id }}</span>
-          <small>{{ frameDuration(frame) }} ms</small>
-        </button>
+        <div class="trace-jump">
+          <input v-model.number="traceFrameJump" class="input" type="number" min="0" placeholder="Frame #">
+          <button class="btn btn-sm btn-default" @click="selectTraceFrameById(traceFrameJump)">跳转</button>
+        </div>
+        <div class="trace-frame-list">
+          <button
+            v-for="frame in frames"
+            :key="frame.id"
+            :class="['trace-frame-row', { active: selectedTraceFrame && selectedTraceFrame.id === frame.id }]"
+            @click="selectTraceFrame(frame)"
+          >
+            <span>#{{ frame.id }}</span>
+            <small>{{ frame.draw_call_count.toLocaleString() }} draws · {{ frameDuration(frame) }} ms</small>
+          </button>
+        </div>
       </aside>
 
       <main class="trace-main">
@@ -112,7 +141,7 @@ function textureText(draw: DrawCallInsight): string {
             <div>
               <h4>Frame Program Summary</h4>
               <p v-if="frameProgramInsight">
-                Frame #{{ frameProgramInsight.frame_num }} · {{ frameProgramInsight.total_draw_calls.toLocaleString() }} draw calls · lines {{ frameProgramInsight.start_line }}-{{ frameProgramInsight.end_line }}
+                Frame #{{ frameProgramInsight.frame_num }} · {{ frameTimingText() }} · {{ frameProgramInsight.api_call_count.toLocaleString() }} API · {{ frameProgramInsight.total_draw_calls.toLocaleString() }} draw calls · lines {{ frameProgramInsight.start_line }}-{{ frameProgramInsight.end_line }}
               </p>
               <p v-else>选择一帧查看 Program 使用归纳。</p>
             </div>
@@ -125,9 +154,10 @@ function textureText(draw: DrawCallInsight): string {
                 <tr>
                   <th>Program</th>
                   <th>Draw Calls</th>
+                  <th>占比</th>
                   <th>Use</th>
                   <th>来源</th>
-                  <th>Shader</th>
+                  <th>本帧 Shader</th>
                   <th>置信度</th>
                   <th>Line</th>
                 </tr>
@@ -141,14 +171,15 @@ function textureText(draw: DrawCallInsight): string {
                 >
                   <td class="mono">#{{ program.program_id }}</td>
                   <td class="mono">{{ program.draw_call_count }}</td>
+                  <td class="mono">{{ programDrawShare(program.draw_call_count) }}</td>
                   <td class="mono">{{ program.use_count }}</td>
                   <td>{{ sourceLabel(program.source_type) }}</td>
-                  <td class="mono">{{ shaderIdsText(program.shader_ids) }}</td>
+                  <td class="mono shader-cell">{{ shaderStack(program) }}</td>
                   <td><span :class="['confidence-pill', confidenceClass(program.confidence)]">{{ confidenceLabel(program.confidence) }}</span></td>
                   <td class="mono">{{ lineRange(program) }}</td>
                 </tr>
                 <tr v-if="!frameProgramInsight || frameProgramInsight.programs.length === 0">
-                  <td colspan="7" style="text-align:center;color:var(--text-placeholder);padding:1.5rem;">暂无 Program 使用数据</td>
+                  <td colspan="8" style="text-align:center;color:var(--text-placeholder);padding:1.5rem;">暂无 Program 使用数据</td>
                 </tr>
               </tbody>
             </table>
@@ -173,6 +204,7 @@ function textureText(draw: DrawCallInsight): string {
               <thead>
                 <tr>
                   <th>Line</th>
+                  <th>#</th>
                   <th>API</th>
                   <th>Program</th>
                   <th>VAO</th>
@@ -185,6 +217,7 @@ function textureText(draw: DrawCallInsight): string {
               <tbody>
                 <tr v-for="draw in traceDrawCalls" :key="`${draw.line_num}-${draw.api_name}`">
                   <td class="mono">{{ draw.line_num }}</td>
+                  <td class="mono">{{ draw.index }}</td>
                   <td class="mono">{{ draw.api_name }}</td>
                   <td class="mono">#{{ draw.program_id || '—' }}</td>
                   <td class="mono">{{ draw.vao || '—' }}</td>
@@ -194,7 +227,7 @@ function textureText(draw: DrawCallInsight): string {
                   <td class="mono params-cell">{{ draw.raw_params }}</td>
                 </tr>
                 <tr v-if="traceDrawCalls.length === 0">
-                  <td colspan="8" style="text-align:center;color:var(--text-placeholder);padding:1.5rem;">暂无 DrawCall 数据</td>
+                  <td colspan="9" style="text-align:center;color:var(--text-placeholder);padding:1.5rem;">暂无 DrawCall 数据</td>
                 </tr>
               </tbody>
             </table>
@@ -227,7 +260,7 @@ function textureText(draw: DrawCallInsight): string {
               <div v-for="shader in selectedTraceProgram.shaders" :key="shader.id" class="shader-box">
                 <div class="shader-head">
                   <strong>{{ shaderLabel(shader) }}</strong>
-                  <span>{{ shader.source_available ? 'source' : 'no source' }}</span>
+                  <span>{{ shader.source_available ? 'source available' : 'no source in log' }}</span>
                 </div>
                 <pre v-if="shader.source_available" class="shader-source">{{ shader.source }}</pre>
               </div>

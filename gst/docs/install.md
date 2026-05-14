@@ -6,20 +6,20 @@ GST can be installed via deb or rpm packages, or built from source.
 
 Download the appropriate package for your system:
 
-**Pre-built Packages**
-
-Download the appropriate package for your system:
-
 ### Debian/Ubuntu (.deb)
 
 ```bash
-sudo dpkg -i gst_2.0.0_amd64.deb
+sudo dpkg -i gst-2.0.0-amd64.deb
+# or
+sudo dpkg -i gst-2.0.0-arm64.deb
 ```
 
 ### RHEL/CentOS/Fedora (.rpm)
 
 ```bash
 sudo rpm -i gst-2.0.0-1.x86_64.rpm
+# or
+sudo rpm -i gst-2.0.0-1.aarch64.rpm
 ```
 
 ## Build from Source
@@ -27,13 +27,16 @@ sudo rpm -i gst-2.0.0-1.x86_64.rpm
 ### Prerequisites
 
 - Go 1.22 or later
-- For gst-server web UI: no additional dependencies
-- For building packages: fpm tool
+- For gst-server web UI build: Node.js/npm
+- For deb packages: `dpkg-deb`
+- For rpm packages: `rpmbuild` from `rpm-build`
+
+This repository requires Go 1.22 or later. In the current development environment, use `/usr/local/go/bin/go` or put `/usr/local/go/bin` before the system Go in `PATH`.
 
 ### Build Binaries
 
 ```bash
-# Download dependencies
+# Optional when dependencies changed
 go mod tidy
 
 # Build gst-server (web UI)
@@ -48,37 +51,31 @@ go build -o bin/gst-cli ./cmd/cli
 Using make:
 
 ```bash
-# Build deb package
-make deb
+# Build web assets and binaries
+make build-all
 
-# Build rpm package
+# Build package for the current architecture
+make deb
 make rpm
 
-# Build both
+# Build both package formats for the current architecture
 make package
+
+# Build all release packages
+make deb-amd64
+make deb-arm64
+make rpm-amd64
+make rpm-arm64
 ```
 
-Manual build with fpm:
+The deb targets cross-compile `gst-server` and `gst-cli` for Linux `amd64`/`arm64`, build `web/dist`, and stage:
+- `/usr/bin/gst-server`
+- `/usr/bin/gst`
+- `/usr/share/gst/web/`
+- `/usr/share/applications/gst.desktop`
+- `/var/lib/gst/`
 
-```bash
-# Debian package
-fpm -s dir -t deb \
-  -n gst \
-  -v 2.0.0 \
-  -a amd64 \
-  -p gst_2.0.0_amd64.deb \
-  --prefix=/usr \
-  -f bin/gst-server=/usr/bin/gst-server
-
-# RPM package
-fpm -s dir -t rpm \
-  -n gst \
-  -v 2.0.0 \
-  -a x86_64 \
-  -p gst-2.0.0-1.x86_64.rpm \
-  --prefix=/usr \
-  -f bin/gst-server=/usr/bin/gst-server
-```
+The rpm targets use the same staged payload and require `rpmbuild` on the build machine.
 
 ## Post-Installation
 

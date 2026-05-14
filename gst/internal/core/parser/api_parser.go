@@ -2,11 +2,11 @@ package parser
 
 import (
 	"bufio"
+	"gst/internal/core"
 	"io"
 	"regexp"
 	"strconv"
 	"strings"
-	"gst/internal/core"
 )
 
 var (
@@ -52,15 +52,16 @@ func (p *APIParser) Parse(reader io.Reader) (*core.ParsedLog, error) {
 	var parsedLog core.ParsedLog
 	var currentFrame *core.FrameInfo
 	var fps float64
-	var pendingFrameCostUs int64       // Frame cost time waiting to be applied (for current frame)
-	var savedFrameCostUs int64         // Frame cost saved at ParsedLog level (for previous frame without API calls)
+	var pendingFrameCostUs int64 // Frame cost time waiting to be applied (for current frame)
+	var savedFrameCostUs int64   // Frame cost saved at ParsedLog level (for previous frame without API calls)
+	var savedFrameNum int        // Source frame number saved with savedFrameCostUs
 	var inShaderBlock bool
 	var currentShaderSource []string
 	var currentShaderCommand string // 当前 shader 的原始 glShaderSource 行
 	var shaderID int
-	var pendingRawShaderID int    // 原始格式 glShaderSource 的 ID
+	var pendingRawShaderID int         // 原始格式 glShaderSource 的 ID
 	var pendingRawShaderCommand string // 原始格式 glShaderSource 行
-	var pendingRawShader bool    // 标记下一行是否是 #### 开头
+	var pendingRawShader bool          // 标记下一行是否是 #### 开头
 	lineNum := 0
 
 	for scanner.Scan() {
@@ -147,7 +148,7 @@ func (p *APIParser) Parse(reader io.Reader) (*core.ParsedLog, error) {
 				// 块开始
 				inShaderBlock = true
 				currentShaderSource = []string{}
-				shaderID = pendingRawShaderID          // 使用 glShaderSource 记录的 ID
+				shaderID = pendingRawShaderID                  // 使用 glShaderSource 记录的 ID
 				currentShaderCommand = pendingRawShaderCommand // 保存原始 glShaderSource 行
 			}
 			continue
@@ -160,16 +161,51 @@ func (p *APIParser) Parse(reader io.Reader) (*core.ParsedLog, error) {
 		// 检测 frame cost - 可能是 swapBuffers 之后才出现
 		// 格式: [thread_id] N frame cost Xms 或 N frame cost Xms
 		if matches := frameCostRegex.FindStringSubmatch(line); len(matches) > 3 {
+			frameNum, _ := strconv.Atoi(matches[2])
 			frameCostMs, _ := strconv.ParseInt(matches[3], 10, 64)
 			pendingFrameCostUs = frameCostMs * 1000
 
-			// Bug 1 fix: 如果当前没有帧，保存到 ParsedLog 级别
-			if currentFrame == nil && pendingFrameCostUs > 0 {
-				savedFrameCostUs = pendingFrameCostUs
+			applied := false
+			for i := len(parsedLog.Frames) - 1; i >= 0; i-- {
+				if parsedLog.Frames[i].FrameNum == frameNum {
+					parsedLog.Frames[i].TotalTimeUs = pendingFrameCostUs
+					parsedLog.Frames[i].HasTiming = true
+					parsedLog.Frames[i].TimingSource = "frame_cost"
+					parsedLog.Frames[i].APITotalTimeUs = parsedLog.Frames[i].TotalTimeUs - parsedLog.Frames[i].SwapBufferTimeUs
+					if parsedLog.Frames[i].APITotalTimeUs < 0 {
+						parsedLog.Frames[i].APITotalTimeUs = 0
+					}
+					applied = true
+					break
+				}
 			}
-			// 如果有pending的帧，用frame cost的时间覆盖
-			if currentFrame != nil && pendingFrameCostUs > 0 {
+			if applied {
+				pendingFrameCostUs = 0
+			}
+			if !applied && currentFrame == nil && len(parsedLog.Frames) > 0 && pendingFrameCostUs > 0 {
+				last := &parsedLog.Frames[len(parsedLog.Frames)-1]
+				last.FrameNum = frameNum
+				last.TotalTimeUs = pendingFrameCostUs
+				last.HasTiming = true
+				last.TimingSource = "frame_cost"
+				last.APITotalTimeUs = last.TotalTimeUs - last.SwapBufferTimeUs
+				if last.APITotalTimeUs < 0 {
+					last.APITotalTimeUs = 0
+				}
+				pendingFrameCostUs = 0
+				applied = true
+			}
+			if !applied && currentFrame != nil && pendingFrameCostUs > 0 {
+				currentFrame.FrameNum = frameNum
 				currentFrame.TotalTimeUs = pendingFrameCostUs
+				currentFrame.HasTiming = true
+				currentFrame.TimingSource = "frame_cost"
+				pendingFrameCostUs = 0
+				applied = true
+			}
+			if !applied && currentFrame == nil && pendingFrameCostUs > 0 {
+				savedFrameCostUs = pendingFrameCostUs
+				savedFrameNum = frameNum
 				pendingFrameCostUs = 0
 			}
 			continue
@@ -199,17 +235,24 @@ func (p *APIParser) Parse(reader io.Reader) (*core.ParsedLog, error) {
 			}
 			if currentFrame == nil {
 				currentFrame = &core.FrameInfo{
-					FrameNum:    len(parsedLog.Frames),
-					StartLine:   lineNum,
-					TotalTimeUs: 0,
-					APICalls:    []core.APILogEntry{},
-					APISummary:  make(map[string]*core.APISummary),
-					Shaders:     []*core.ShaderInfo{},
+					FrameNum:     len(parsedLog.Frames),
+					StartLine:    lineNum,
+					TotalTimeUs:  0,
+					HasTiming:    true,
+					TimingSource: "profile",
+					APICalls:     []core.APILogEntry{},
+					APISummary:   make(map[string]*core.APISummary),
+					Shaders:      []*core.ShaderInfo{},
 				}
 				// Bug 1 fix: 创建新帧时检查是否有待处理的 frame cost
 				if savedFrameCostUs > 0 {
 					currentFrame.TotalTimeUs = savedFrameCostUs
+					currentFrame.TimingSource = "frame_cost"
+					if savedFrameNum != 0 {
+						currentFrame.FrameNum = savedFrameNum
+					}
 					savedFrameCostUs = 0
+					savedFrameNum = 0
 				}
 			}
 			currentFrame.APICalls = append(currentFrame.APICalls, entry)
@@ -240,10 +283,20 @@ func (p *APIParser) Parse(reader io.Reader) (*core.ParsedLog, error) {
 				// Bug fix: 先应用 savedFrameCostUs/pendingFrameCostUs，再计算 APITotalTimeUs
 				if savedFrameCostUs > 0 {
 					currentFrame.TotalTimeUs = savedFrameCostUs
+					currentFrame.TimingSource = "frame_cost"
+					if savedFrameNum != 0 {
+						currentFrame.FrameNum = savedFrameNum
+					}
 					savedFrameCostUs = 0
+					savedFrameNum = 0
 				} else if pendingFrameCostUs > 0 {
 					currentFrame.TotalTimeUs = pendingFrameCostUs
+					currentFrame.TimingSource = "frame_cost"
 					pendingFrameCostUs = 0
+				}
+				currentFrame.HasTiming = currentFrame.TotalTimeUs > 0
+				if currentFrame.TimingSource == "" {
+					currentFrame.TimingSource = "profile"
 				}
 				// APITotalTimeUs = TotalTimeUs - SwapBufferTimeUs (在 TotalTimeUs 确定后计算)
 				currentFrame.APITotalTimeUs = currentFrame.TotalTimeUs - swapTimeUs
@@ -262,6 +315,11 @@ func (p *APIParser) Parse(reader io.Reader) (*core.ParsedLog, error) {
 		currentFrame.EndLine = lineNum
 		if pendingFrameCostUs > 0 {
 			currentFrame.TotalTimeUs = pendingFrameCostUs
+			currentFrame.TimingSource = "frame_cost"
+		}
+		currentFrame.HasTiming = currentFrame.TotalTimeUs > 0
+		if currentFrame.TimingSource == "" {
+			currentFrame.TimingSource = "profile"
 		}
 		parsedLog.Frames = append(parsedLog.Frames, *currentFrame)
 	}

@@ -7,8 +7,8 @@ import type {
   FrameData,
   FrameDetail,
   FrameProgramInsight,
+  FrameRawLinesPage,
   FrameSummaryResponse,
-  FuncStat,
   OverviewResult,
   ParseResult,
   ProgramInfo,
@@ -19,19 +19,11 @@ import type {
   TextureSummary,
   ToastMessage,
   TraceProgramsResponse,
-  WorkflowResult,
 } from '../types'
 
 const FETCH_TIMEOUT = 120000
 const TOAST_TIMEOUT = 5000
 const apiBase = '/api/log'
-
-const workflowLabels: Record<string, string> = {
-  performance: '性能',
-  crash: '崩溃',
-  rendering: '渲染',
-  memory: '内存',
-}
 
 export function useLogAnalysis() {
   const filePath = ref('')
@@ -48,7 +40,6 @@ export function useLogAnalysis() {
     { id: 'search', name: '搜索' },
     { id: 'analyze', name: '分析' },
     { id: 'trace', name: 'Trace Inspector' },
-    { id: 'diagnose', name: 'Bug诊断' },
     { id: 'export', name: '导出' },
   ]
 
@@ -64,9 +55,18 @@ export function useLogAnalysis() {
   const frameModalVisible = ref(false)
   const modalFrame = ref<FrameData | null>(null)
   const modalFrameDetail = ref<FrameDetail | null>(null)
+  const modalFrameRawLines = ref<string[]>([])
+  const modalFrameRawPage = ref(1)
+  const modalFrameRawPageSize = ref(200)
+  const modalFrameRawTotal = ref(0)
+  const modalFrameRawLoading = ref(false)
+  const modalFrameRawStartLine = ref(0)
+  const modalFrameRawEndLine = ref(0)
+  const frameLogDownloading = ref(false)
 
   const searchKeyword = ref('')
   const searchResults = ref<SearchResultItem[]>([])
+  const searchTotal = ref(0)
   const searching = ref(false)
   const searched = ref(false)
   const searchCurrentPage = ref(1)
@@ -78,19 +78,16 @@ export function useLogAnalysis() {
   const analyzeLoaded = ref(false)
   const analyzeLoading = ref(false)
   const selectedTopFrame = ref<FrameData | null>(null)
-  const selectedTopFrameFuncStats = ref<FuncStat[]>([])
 
   const overview = ref<OverviewResult | null>(null)
   const bottleneck = ref<BottleneckAnalysis | null>(null)
   const drawCallSummary = ref<DrawCallSummary | null>(null)
   const textureSummary = ref<TextureSummary | null>(null)
-  const workflowResults = ref<Record<string, WorkflowResult>>({})
-  const workflowLoading = ref<string | null>(null)
-
   const tracePrograms = ref<ProgramInfo[]>([])
   const traceProgramsLoaded = ref(false)
   const traceLoading = ref(false)
   const selectedTraceFrame = ref<FrameData | null>(null)
+  const traceFrameJump = ref<number | null>(null)
   const frameProgramInsight = ref<FrameProgramInsight | null>(null)
   const traceDrawCalls = ref<DrawCallInsight[]>([])
   const traceDrawCallPage = ref(1)
@@ -111,12 +108,8 @@ export function useLogAnalysis() {
 
   const pageRange = computed(() => buildPageRange(currentPage.value, totalPages.value))
 
-  const searchTotalPages = computed(() => Math.max(1, Math.ceil(searchResults.value.length / searchPageSize.value)))
-
-  const paginatedSearchResults = computed(() => {
-    const start = (searchCurrentPage.value - 1) * searchPageSize.value
-    return searchResults.value.slice(start, start + searchPageSize.value)
-  })
+  const searchTotalPages = computed(() => Math.max(1, Math.ceil(searchTotal.value / searchPageSize.value)))
+  const paginatedSearchResults = computed(() => searchResults.value)
 
   const searchPageRange = computed(() => buildPageRange(searchCurrentPage.value, searchTotalPages.value))
 
@@ -177,6 +170,9 @@ export function useLogAnalysis() {
       if (file) {
         selectedFile.value = file
         filePath.value = file.name
+        if (file.size > 100 * 1024 * 1024) {
+          showToast('大于 100MB 的日志建议输入服务器本机路径解析，避免浏览器上传占用过高。')
+        }
       }
     }
     input.click()
@@ -184,6 +180,10 @@ export function useLogAnalysis() {
 
   async function parseFile() {
     if (!selectedFile.value && !filePath.value) return
+    if (selectedFile.value && selectedFile.value.size > 100 * 1024 * 1024) {
+      showToast('当前浏览器上传大小超过 100MB，建议改用本机路径解析大日志。')
+      return
+    }
     parsing.value = true
     loading.value = true
     loadingText.value = '解析日志文件...'
@@ -273,11 +273,62 @@ export function useLogAnalysis() {
   async function openFrameModal(frame: FrameData) {
     modalFrame.value = frame
     modalFrameDetail.value = null
+    modalFrameRawLines.value = []
+    modalFrameRawPage.value = 1
+    modalFrameRawTotal.value = 0
+    modalFrameRawStartLine.value = 0
+    modalFrameRawEndLine.value = 0
     frameModalVisible.value = true
     try {
       modalFrameDetail.value = await fetchJSON<FrameDetail>(`${apiBase}/frames/${frame.id}`)
+      await loadModalFrameRawLines(1)
     } catch (err) {
       showToast(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  async function loadModalFrameRawLines(page = modalFrameRawPage.value) {
+    if (!modalFrame.value) return
+    modalFrameRawLoading.value = true
+    try {
+      const safePage = Math.max(1, page)
+      const data = await fetchJSON<FrameRawLinesPage>(
+        `${apiBase}/frames/${modalFrame.value.id}/raw-lines?page=${safePage}&page_size=${modalFrameRawPageSize.value}`
+      )
+      modalFrameRawLines.value = data.lines
+      modalFrameRawPage.value = data.page
+      modalFrameRawPageSize.value = data.page_size
+      modalFrameRawTotal.value = data.total
+      modalFrameRawStartLine.value = data.start_line
+      modalFrameRawEndLine.value = data.end_line
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : String(err))
+    } finally {
+      modalFrameRawLoading.value = false
+    }
+  }
+
+  async function downloadFrameLog(frame: FrameData | null = modalFrame.value) {
+    if (!frame) return
+    frameLogDownloading.value = true
+    try {
+      const res = await fetch(`${apiBase}/frames/${frame.id}/download`)
+      if (!res.ok) {
+        const text = await res.text()
+        throw new Error(text || `下载失败: ${res.status}`)
+      }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `frame_${frame.id}.log`
+      a.click()
+      URL.revokeObjectURL(url)
+      showToast(`Frame #${frame.id} 日志已下载`, 'success')
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : String(err))
+    } finally {
+      frameLogDownloading.value = false
     }
   }
 
@@ -285,25 +336,35 @@ export function useLogAnalysis() {
     frameModalVisible.value = false
     modalFrame.value = null
     modalFrameDetail.value = null
+    modalFrameRawLines.value = []
+    modalFrameRawTotal.value = 0
   }
 
-  function goSearchPage(page: number) {
+  async function goSearchPage(page: number) {
     const p = Math.max(1, Math.min(searchTotalPages.value, page))
-    searchCurrentPage.value = p
+    await loadSearchPage(p)
   }
 
   async function doSearch() {
     if (!searchKeyword.value) return
+    await loadSearchPage(1)
+  }
+
+  async function loadSearchPage(page: number) {
+    if (!searchKeyword.value) return
     searching.value = true
     searched.value = false
     searchResults.value = []
-    searchCurrentPage.value = 1
+    searchCurrentPage.value = Math.max(1, page)
 
     try {
       const data = await fetchJSON<SearchResponse>(
-        `${apiBase}/search?q=${encodeURIComponent(searchKeyword.value)}`
+        `${apiBase}/search?q=${encodeURIComponent(searchKeyword.value)}&page=${searchCurrentPage.value}&page_size=${searchPageSize.value}`
       )
       searchResults.value = data.results
+      searchTotal.value = data.total
+      searchCurrentPage.value = data.page
+      searchPageSize.value = data.page_size
       searched.value = true
     } catch (err) {
       showToast(err instanceof Error ? err.message : String(err))
@@ -334,18 +395,8 @@ export function useLogAnalysis() {
   }
 
   async function selectTopFrame(frame: FrameData) {
-    if (selectedTopFrame.value && selectedTopFrame.value.id === frame.id) {
-      selectedTopFrame.value = null
-      selectedTopFrameFuncStats.value = []
-      return
-    }
     selectedTopFrame.value = frame
-    try {
-      selectedTopFrameFuncStats.value = await fetchJSON<FuncStat[]>(`${apiBase}/frames/${frame.id}/funcs`)
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : String(err))
-      selectedTopFrameFuncStats.value = []
-    }
+    await openFrameModal(frame)
   }
 
   function toggleShaderExpand(shader: ShaderStat) {
@@ -380,6 +431,7 @@ export function useLogAnalysis() {
 
   async function selectTraceFrame(frame: FrameData) {
     selectedTraceFrame.value = frame
+    traceFrameJump.value = frame.id
     frameProgramInsight.value = null
     traceDrawCalls.value = []
     traceDrawCallPage.value = 1
@@ -389,6 +441,35 @@ export function useLogAnalysis() {
     try {
       frameProgramInsight.value = await fetchJSON<FrameProgramInsight>(`${apiBase}/frames/${frame.id}/programs`)
       await loadTraceDrawCalls()
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : String(err))
+    } finally {
+      traceLoading.value = false
+    }
+  }
+
+  async function selectTraceFrameById(frameId: number | null) {
+    if (frameId == null || Number.isNaN(frameId)) return
+    const localFrame = frames.value.find(f => f.id === frameId)
+    if (localFrame) {
+      await selectTraceFrame(localFrame)
+      return
+    }
+    traceLoading.value = true
+    try {
+      const detail = await fetchJSON<FrameDetail>(`${apiBase}/frames/${frameId}`)
+      await selectTraceFrame(mapFrameData({
+        frame_num: detail.frame_num,
+        start_line: detail.start_line,
+        end_line: detail.end_line,
+        total_time_us: detail.total_time_us,
+        swap_buffer_time_us: detail.swap_buffer_time_us,
+        api_total_time_us: detail.api_total_time_us,
+        api_count: detail.api_count,
+        draw_call_count: detail.draw_call_count,
+        has_timing: detail.has_timing,
+        timing_source: detail.timing_source,
+      }))
     } catch (err) {
       showToast(err instanceof Error ? err.message : String(err))
     } finally {
@@ -466,26 +547,6 @@ export function useLogAnalysis() {
     }
   }
 
-  async function runWorkflow(workflow: string) {
-    if (!parseResult.value || workflowLoading.value) return
-    workflowLoading.value = workflow
-    try {
-      const data = await fetchJSON<WorkflowResult>(`${apiBase}/analyze/workflow`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workflow }),
-      })
-      workflowResults.value = {
-        ...workflowResults.value,
-        [workflow]: data,
-      }
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : String(err))
-    } finally {
-      workflowLoading.value = null
-    }
-  }
-
   async function exportData() {
     if (!parseResult.value) return
     exporting.value = true
@@ -529,17 +590,15 @@ export function useLogAnalysis() {
     shaderStats.value = []
     analyzeLoaded.value = false
     selectedTopFrame.value = null
-    selectedTopFrameFuncStats.value = []
     overview.value = null
     bottleneck.value = null
     drawCallSummary.value = null
     textureSummary.value = null
-    workflowResults.value = {}
-    workflowLoading.value = null
     tracePrograms.value = []
     traceProgramsLoaded.value = false
     traceLoading.value = false
     selectedTraceFrame.value = null
+    traceFrameJump.value = null
     frameProgramInsight.value = null
     traceDrawCalls.value = []
     traceDrawCallPage.value = 1
@@ -559,11 +618,14 @@ export function useLogAnalysis() {
     frameModalVisible.value = false
     modalFrame.value = null
     modalFrameDetail.value = null
+    modalFrameRawLines.value = []
+    modalFrameRawTotal.value = 0
     currentPage.value = 1
     totalFrames.value = 0
     jumpPage.value = 1
     searchKeyword.value = ''
     searchResults.value = []
+    searchTotal.value = 0
     searched.value = false
     searchCurrentPage.value = 1
     resetAnalysisData()
@@ -578,23 +640,24 @@ export function useLogAnalysis() {
     frames, currentPage, pageSize, totalFrames, totalPages, jumpPage, pageRange,
     selectedFrame, frameDetail,
     frameModalVisible, modalFrame, modalFrameDetail,
+    modalFrameRawLines, modalFrameRawPage, modalFrameRawPageSize, modalFrameRawTotal,
+    modalFrameRawLoading, modalFrameRawStartLine, modalFrameRawEndLine, frameLogDownloading,
     searchKeyword, searchResults, searching, searched,
-    searchCurrentPage, searchPageSize, searchTotalPages, paginatedSearchResults, searchPageRange,
-    topN, topFrames, shaderStats, selectedTopFrame, selectedTopFrameFuncStats,
+    searchCurrentPage, searchPageSize, searchTotal, searchTotalPages, paginatedSearchResults, searchPageRange,
+    topN, topFrames, shaderStats, selectedTopFrame,
     overview, bottleneck, drawCallSummary, textureSummary, hotDrawFrames,
     tracePrograms, traceProgramsLoaded, traceLoading, traceProgramSummary,
     selectedTraceFrame, frameProgramInsight, traceDrawCalls,
+    traceFrameJump,
     traceDrawCallPage, traceDrawCallPageSize, traceDrawCallTotal, traceDrawCallTotalPages,
     selectedTraceProgramId, selectedTraceProgram, programDetailLoading,
-    workflowResults, workflowLoading, workflowLabels,
     exportFormat, exporting, exportType,
     toast, stopping, analyzeLoading,
     browseFile, parseFile, loadFrames, goPage, selectFrame,
-    openFrameModal, closeFrameModal,
+    openFrameModal, loadModalFrameRawLines, downloadFrameLog, closeFrameModal,
     doSearch, goSearchPage,
     loadAnalyze, loadTopFrames, selectTopFrame, toggleShaderExpand,
-    loadTracePrograms, selectTraceFrame, loadTraceDrawCalls, filterTraceProgram, loadTraceProgramDetail,
-    runWorkflow,
+    loadTracePrograms, selectTraceFrame, selectTraceFrameById, loadTraceDrawCalls, filterTraceProgram, loadTraceProgramDetail,
     exportData, switchTab, resetAll, stopService,
   }
 }
@@ -616,6 +679,12 @@ function mapFrameData(f: FrameSummaryResponse): FrameData {
     api_ms: apiTimeUs > 0 ? apiTimeUs / 1000 : null,
     other_ms: otherTimeUs > 0 ? otherTimeUs / 1000 : null,
     api_count: f.api_count ?? 0,
+    draw_call_count: f.draw_call_count ?? 0,
+    has_timing: Boolean(f.has_timing ?? totalTimeUs > 0),
+    timing_source: f.timing_source || (totalTimeUs > 0 ? 'profile' : 'none'),
+    stats_source: f.stats_source,
+    category_stats: f.category_stats ?? [],
+    key_apis: f.key_apis ?? [],
   }
 }
 

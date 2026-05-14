@@ -69,6 +69,9 @@ func TestTraceInspectorAnalyzer_SourceProgramFrameInsight(t *testing.T) {
 	if len(frame.Programs) != 1 || frame.Programs[0].ProgramID != 18 {
 		t.Fatalf("unexpected program usages: %+v", frame.Programs)
 	}
+	if len(frame.Programs[0].Shaders) != 2 || frame.Programs[0].Shaders[0].Source != "" {
+		t.Fatalf("frame program usage should expose shader identity without source payload: %+v", frame.Programs[0].Shaders)
+	}
 	drawCalls, ok := NewTraceInspectorAnalyzer(log).AnalyzeFrameDrawCalls(0, 0, result)
 	if !ok {
 		t.Fatal("frame draw calls not found")
@@ -77,6 +80,9 @@ func TestTraceInspectorAnalyzer_SourceProgramFrameInsight(t *testing.T) {
 		t.Fatalf("draw call insight count = %d, want 1", len(drawCalls))
 	}
 	draw := drawCalls[0]
+	if draw.Index != 1 {
+		t.Fatalf("draw index = %d, want 1", draw.Index)
+	}
 	if draw.ProgramID != 18 || draw.ArrayBuffer != 7 || draw.ElementBuffer != 8 {
 		t.Fatalf("unexpected draw insight: %+v", draw)
 	}

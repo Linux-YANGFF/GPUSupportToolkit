@@ -10,6 +10,12 @@ export default defineConfig({
         main: 'index.html',
         logs: 'logs.html',
       },
+      output: {
+        manualChunks: {
+          'element-plus': ['element-plus', '@element-plus/icons-vue'],
+          vue: ['vue'],
+        },
+      },
     },
   },
 })

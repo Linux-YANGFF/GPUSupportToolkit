@@ -6,9 +6,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"gst/internal/core"
+	"gst/internal/core/parser"
 )
 
 func TestValidateLogPath(t *testing.T) {
@@ -160,6 +162,47 @@ func TestMatchLine(t *testing.T) {
 	}
 }
 
+func TestSearchTimeRange(t *testing.T) {
+	h := NewHandler()
+	h.current = &core.ParsedLog{
+		Frames: []core.FrameInfo{
+			{
+				FrameNum:    1,
+				TotalTimeUs: 3000,
+				APICalls: []core.APILogEntry{
+					{APIName: "glBindBuffer", LineNum: 1},
+					{APIName: "glDrawArrays", LineNum: 2},
+				},
+			},
+			{
+				FrameNum:    2,
+				TotalTimeUs: 800,
+				APICalls: []core.APILogEntry{
+					{APIName: "glClear", LineNum: 3},
+				},
+			},
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/log/search/time?start_us=1000&end_us=5000", nil)
+	rr := httptest.NewRecorder()
+	h.SearchTimeRange(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	var got TimeRangeSearchResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if got.Total != 1 || len(got.Frames) != 1 || got.Frames[0].FrameNum != 1 {
+		t.Fatalf("unexpected frames response: %+v", got)
+	}
+	if len(got.APICalls) != 2 {
+		t.Fatalf("expected 2 api calls for non-indexed log, got %d", len(got.APICalls))
+	}
+}
+
 func TestBuildLinesFromLog(t *testing.T) {
 	log := &core.ParsedLog{
 		Frames: []core.FrameInfo{
@@ -265,6 +308,126 @@ func TestTraceEndpoints(t *testing.T) {
 			t.Fatalf("unexpected draw calls: %+v", body)
 		}
 	})
+}
+
+func TestFrameRawLinesAndDownloadIndexed(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hybrid.log")
+	content := strings.Join([]string{
+		"[    1] (gc=0x1, tid=0x1): glUseProgram 7",
+		"[    2] (gc=0x1, tid=0x1): glDrawElements 0x0004 54 0x1403 0x2d0",
+		"[    3] glXSwapBuffers: dpy = 0x1, drawable = 1",
+		"[    4] swapBuffers: 100 us",
+		"[    5] 184 frame cost 16ms",
+		"[    6] glDrawElements: count=1, time=900 us",
+		"[    7] (gc=0x1, tid=0x1): glDrawArrays 0x0004 0 3",
+		"[    8] glXSwapBuffers: dpy = 0x1, drawable = 1",
+		"[    9] 185 frame cost 20ms",
+		"",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	parsed, err := parser.ParseIndexedRawTraceFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := NewHandler()
+	h.current = parsed
+	h.rawLogPath = path
+
+	req := httptest.NewRequest(http.MethodGet, "/api/log/frames/184/raw-lines?page=1&page_size=20", nil)
+	rec := httptest.NewRecorder()
+	h.GetFrameRawLines(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("raw-lines status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var body FrameRawLinesResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if body.Total != 6 || len(body.Lines) != 6 {
+		t.Fatalf("raw-lines total=%d len=%d body=%+v", body.Total, len(body.Lines), body)
+	}
+	if body.Lines[1] != "(gc=0x1, tid=0x1): glDrawElements 0x0004 54 0x1403 0x2d0" {
+		t.Fatalf("line prefix not stripped or raw text changed: %#v", body.Lines)
+	}
+	if strings.Contains(body.Lines[0], "[    1]") {
+		t.Fatalf("line number prefix leaked: %#v", body.Lines)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/log/frames/184/download", nil)
+	rec = httptest.NewRecorder()
+	h.DownloadFrameRawLog(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("download status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	download := rec.Body.String()
+	if !strings.Contains(download, "[    6] glDrawElements: count=1, time=900 us") {
+		t.Fatalf("download missing profile tail: %q", download)
+	}
+	if strings.Contains(download, "[    7] (gc=0x1, tid=0x1): glDrawArrays") {
+		t.Fatalf("download leaked next frame: %q", download)
+	}
+}
+
+func TestAnalyzeShadersFallsBackToAPIStats(t *testing.T) {
+	h := NewHandler()
+	h.current = &core.ParsedLog{
+		Frames: []core.FrameInfo{
+			{
+				FrameNum: 9,
+				APISummary: map[string]*core.APISummary{
+					"glUseProgram":        {APIName: "glUseProgram", Count: 3, TimeUs: 30},
+					"glProgramUniform4fv": {APIName: "glProgramUniform4fv", Count: 7, TimeUs: 140},
+					"glDrawElements":      {APIName: "glDrawElements", Count: 5, TimeUs: 500},
+				},
+			},
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/log/analyze/shaders", nil)
+	rec := httptest.NewRecorder()
+	h.AnalyzeShaders(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var body ShadersResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if body.Total != 2 {
+		t.Fatalf("shader stat total = %d, want 2: %+v", body.Total, body)
+	}
+	foundUseProgram := false
+	for _, shader := range body.Shaders {
+		if shader.APIName == "glUseProgram" {
+			foundUseProgram = true
+			if shader.Kind != "api_stat" || shader.Count != 3 || shader.TimeUs != 30 {
+				t.Fatalf("unexpected glUseProgram shader stat: %+v", shader)
+			}
+		}
+		if shader.APIName == "glDrawElements" {
+			t.Fatalf("draw API should not be included in shader stats: %+v", shader)
+		}
+	}
+	if !foundUseProgram {
+		t.Fatalf("missing glUseProgram stat: %+v", body.Shaders)
+	}
+}
+
+func TestFormatRawCallLineProfileSummary(t *testing.T) {
+	line := formatRawCallLine(core.APILogEntry{
+		APIName: "glTexImage2D",
+		Count:   1,
+		TimeUs:  899,
+	})
+	want := "glTexImage2D: count=1, time=899 us"
+	if line != want {
+		t.Fatalf("formatRawCallLine = %q, want %q", line, want)
+	}
 }
 
 func TestToParseResult(t *testing.T) {

@@ -35,6 +35,8 @@ gst-cli [options] -parse <file>
 | `-funcs` | Show function call statistics |
 | `-shader` | Show shader compilation statistics |
 | `-diagnose` | Run bug diagnosis engine (7 analyzers) on log file |
+| `-ai-summary` | Output AI-friendly OpenGL case summary JSON |
+| `-frame-stats <N>` | Output one frame's OpenGL category/API statistics as JSON |
 | `-export <format>` | Export results (txt, csv, or json) |
 | `-output <file>` | Output file path (default: stdout) |
 | `-verbose` | Enable verbose logging |
@@ -149,6 +151,26 @@ Combine with other flags for comprehensive analysis:
 gst-cli -diagnose -verbose -parse /path/to/log.trace
 ```
 
+### AI Summary JSON
+
+Produce compact JSON for AI tools without asking the model to read the full log:
+
+```bash
+# Case-level summary with top frames, top APIs, category stats, and contract metadata
+gst-cli -ai-summary -parse /path/to/log.trace
+
+# Frame-level OpenGL category and key API statistics
+gst-cli -frame-stats 423 -parse /path/to/log.trace
+```
+
+The frame stats payload includes:
+- Frame number and source line range
+- Total, swap, and API time
+- Draw call count
+- Key API counters
+- OpenGL category counters
+- Evidence strings for model-grounded analysis
+
 ### Export Results
 
 Export parsed data in various formats:
@@ -175,6 +197,9 @@ gst-cli -search "glShaderSource" -parse /path/to/log.trace
 
 # Bug diagnosis with top frames
 gst-cli -diagnose -top 20 -parse /path/to/log.trace
+
+# AI-oriented summary for downstream tools
+gst-cli -ai-summary -parse /path/to/log.trace
 
 # Export with custom output
 gst-cli -export json -output analysis.json -top 50 -parse /path/to/log.trace

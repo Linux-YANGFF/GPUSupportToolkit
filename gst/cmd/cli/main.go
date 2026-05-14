@@ -3,8 +3,10 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"strconv"
@@ -14,23 +16,26 @@ import (
 	"gst/internal/core/analyzer"
 	"gst/internal/core/bug"
 	"gst/internal/core/exporter"
+	"gst/internal/core/glstats"
 	"gst/internal/core/parser"
 	"gst/internal/core/search"
 	"gst/internal/platform"
 )
 
 var (
-	parseCmd    = flag.String("parse", "", "Parse log file")
-	searchCmd   = flag.String("search", "", "Search keyword in log file")
-	timeRange   = flag.String("time", "", "Time range search: startUs,endUs (e.g., 1000,50000)")
-	topFrames   = flag.Int("top", 10, "Show top N slowest frames")
-	funcStats   = flag.Bool("funcs", false, "Show function statistics")
-	shaderStats = flag.Bool("shader", false, "Show shader statistics")
-	exportFmt   = flag.String("export", "", "Export format: txt|csv|json")
-	output      = flag.String("output", "", "Output file (default: stdout)")
-	diagnose    = flag.Bool("diagnose", false, "Run bug diagnosis on log file")
-	help        = flag.Bool("help", false, "Show help")
-	verbose     = flag.Bool("verbose", false, "Enable verbose logging")
+	parseCmd     = flag.String("parse", "", "Parse log file")
+	searchCmd    = flag.String("search", "", "Search keyword in log file")
+	timeRange    = flag.String("time", "", "Time range search: startUs,endUs (e.g., 1000,50000)")
+	topFrames    = flag.Int("top", 10, "Show top N slowest frames")
+	funcStats    = flag.Bool("funcs", false, "Show function statistics")
+	shaderStats  = flag.Bool("shader", false, "Show shader statistics")
+	exportFmt    = flag.String("export", "", "Export format: txt|csv|json")
+	output       = flag.String("output", "", "Output file (default: stdout)")
+	diagnose     = flag.Bool("diagnose", false, "Run bug diagnosis on log file")
+	aiSummary    = flag.Bool("ai-summary", false, "Output AI-friendly OpenGL frame statistics as JSON")
+	frameStatsID = flag.Int("frame-stats", -1, "Output one frame's OpenGL statistics as JSON")
+	help         = flag.Bool("help", false, "Show help")
+	verbose      = flag.Bool("verbose", false, "Enable verbose logging")
 )
 
 func main() {
@@ -50,6 +55,16 @@ func main() {
 	// Bug 诊断 — 独立模式，运行完直接退出
 	if *diagnose && *parseCmd != "" {
 		runDiagnose(*parseCmd)
+		return
+	}
+
+	if *aiSummary && *parseCmd != "" {
+		printAISummary(*parseCmd)
+		return
+	}
+
+	if *frameStatsID >= 0 && *parseCmd != "" {
+		printFrameStats(*parseCmd, *frameStatsID)
 		return
 	}
 
@@ -88,7 +103,6 @@ func main() {
 		exportResults(*parseCmd, *exportFmt, *output)
 	}
 
-
 }
 
 func printHelp() {
@@ -104,6 +118,8 @@ func printHelp() {
   gst-cli -export <格式> -parse <文件>  导出结果
 
   gst-cli -diagnose -parse <文件>      运行 Bug 诊断分析
+  gst-cli -ai-summary -parse <文件>    输出 AI 友好的帧级 OpenGL 统计 JSON
+  gst-cli -frame-stats <N> -parse <文件> 输出单帧 OpenGL 统计 JSON
 
 选项:
   -parse <文件>      解析指定的日志文件
@@ -115,6 +131,8 @@ func printHelp() {
   -export <格式>    导出格式: txt, csv, json
   -output <文件>    输出文件 (默认: stdout)
   -diagnose         运行 Bug 诊断分析（空指针、资源泄漏、Shader 错误等）
+  -ai-summary       输出 AI 友好的 case summary
+  -frame-stats <N>  输出单帧 OpenGL 分类和重点 API 统计
   -verbose          启用详细日志
   -help             显示帮助
 
@@ -126,6 +144,8 @@ func printHelp() {
   gst-cli -parse trace.api.txt -funcs
   gst-cli -parse trace.api.txt -export json -output result.json
   gst-cli -diagnose -parse trace.api.txt
+  gst-cli -ai-summary -parse trace.api.txt
+  gst-cli -frame-stats 423 -parse trace.api.txt
 `)
 }
 
@@ -418,6 +438,62 @@ func exportResults(filePath string, format string, outputPath string) {
 	} else {
 		fmt.Print(buf.String())
 	}
+}
+
+func printAISummary(filePath string) {
+	parsed, err := parseLogFile(filePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "错误: 解析失败: %v\n", err)
+		return
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(glstats.AnalyzeCase(parsed, 10)); err != nil {
+		fmt.Fprintf(os.Stderr, "错误: JSON 输出失败: %v\n", err)
+	}
+}
+
+func printFrameStats(filePath string, frameID int) {
+	parsed, err := parseLogFile(filePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "错误: 解析失败: %v\n", err)
+		return
+	}
+	for _, frame := range parsed.Frames {
+		if frame.FrameNum == frameID {
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			if err := enc.Encode(glstats.AnalyzeFrame(frame)); err != nil {
+				fmt.Fprintf(os.Stderr, "错误: JSON 输出失败: %v\n", err)
+			}
+			return
+		}
+	}
+	fmt.Fprintf(os.Stderr, "错误: 未找到帧 %d\n", frameID)
+}
+
+func parseLogFile(filePath string) (*core.ParsedLog, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	kind := parser.DetectKindFromReader(file, 5000)
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return nil, err
+	}
+	if kind == parser.KindRawTrace || kind == parser.KindUnknown {
+		parsed, err := parser.ParseIndexedRawTraceFile(filePath)
+		if err == nil && len(parsed.Frames) > 0 {
+			return parsed, nil
+		}
+		if _, seekErr := file.Seek(0, io.SeekStart); seekErr != nil {
+			return nil, seekErr
+		}
+	}
+	p := parser.CreateParser(kind)
+	return p.Parse(file)
 }
 
 func runDiagnose(filePath string) {

@@ -1,9 +1,9 @@
 package analyzer
 
 import (
+	"gst/internal/core"
 	"sort"
 	"strings"
-	"gst/internal/core"
 )
 
 // FuncAnalyzer 函数分析器
@@ -25,16 +25,36 @@ func (fa *FuncAnalyzer) Analyze() []core.FuncStats {
 
 	fa.stats = make(map[string]*core.FuncStats)
 
-	// 遍历所有帧的所有API调用
+	// Prefer per-frame summaries for indexed large logs. They contain aggregate
+	// count/time without retaining every raw API call in memory.
 	for _, frame := range fa.log.Frames {
+		if len(frame.APICalls) == 0 && len(frame.APISummary) > 0 {
+			for _, summary := range frame.APISummary {
+				if stats, ok := fa.stats[summary.APIName]; ok {
+					stats.CallCount += summary.Count
+					stats.TotalTimeUs += summary.TimeUs
+				} else {
+					fa.stats[summary.APIName] = &core.FuncStats{
+						FuncName:    summary.APIName,
+						CallCount:   summary.Count,
+						TotalTimeUs: summary.TimeUs,
+					}
+				}
+			}
+			continue
+		}
 		for _, call := range frame.APICalls {
+			count := call.Count
+			if count <= 0 {
+				count = 1
+			}
 			if stats, ok := fa.stats[call.APIName]; ok {
-				stats.CallCount++
+				stats.CallCount += count
 				stats.TotalTimeUs += call.TimeUs
 			} else {
 				fa.stats[call.APIName] = &core.FuncStats{
 					FuncName:    call.APIName,
-					CallCount:   1,
+					CallCount:   count,
 					TotalTimeUs: call.TimeUs,
 				}
 			}
@@ -44,12 +64,20 @@ func (fa *FuncAnalyzer) Analyze() []core.FuncStats {
 	// 计算平均值并转为 slice
 	results := make([]core.FuncStats, 0, len(fa.stats))
 	for _, stats := range fa.stats {
-		stats.AvgTimeUs = stats.TotalTimeUs / int64(stats.CallCount)
+		if stats.CallCount > 0 {
+			stats.AvgTimeUs = stats.TotalTimeUs / int64(stats.CallCount)
+		}
 		results = append(results, *stats)
 	}
 
 	// 按总耗时降序
 	sort.Slice(results, func(i, j int) bool {
+		if results[i].TotalTimeUs == results[j].TotalTimeUs {
+			if results[i].CallCount == results[j].CallCount {
+				return results[i].FuncName < results[j].FuncName
+			}
+			return results[i].CallCount > results[j].CallCount
+		}
 		return results[i].TotalTimeUs > results[j].TotalTimeUs
 	})
 

@@ -267,6 +267,9 @@ func (tia *TraceInspectorAnalyzer) buildFrameInsights(result *core.TraceAnalysis
 			FrameNum:       frame.FrameNum,
 			StartLine:      frame.StartLine,
 			EndLine:        frame.EndLine,
+			HasTiming:      frame.HasTiming || frame.TotalTimeUs > 0,
+			TotalTimeUs:    frame.TotalTimeUs,
+			APICallCount:   len(frame.APICalls),
 			TotalDrawCalls: totalDrawCalls,
 			Programs:       programUsages,
 			Segments:       segments,
@@ -282,6 +285,7 @@ func (tia *TraceInspectorAnalyzer) AnalyzeFrameDrawCalls(frameNum int, programFi
 	contexts := make(map[string]*traceContextState)
 	var drawCalls []core.DrawCallInsight
 	found := false
+	frameDrawIndex := 0
 
 	for _, frame := range tia.log.Frames {
 		for _, call := range frame.APICalls {
@@ -293,6 +297,9 @@ func (tia *TraceInspectorAnalyzer) AnalyzeFrameDrawCalls(frameNum int, programFi
 			updateTraceState(ctx, call)
 			if !isDrawCall(call.APIName) {
 				continue
+			}
+			if frame.FrameNum == frameNum {
+				frameDrawIndex++
 			}
 			if frame.FrameNum != frameNum {
 				continue
@@ -309,6 +316,7 @@ func (tia *TraceInspectorAnalyzer) AnalyzeFrameDrawCalls(frameNum int, programFi
 				}
 			}
 			drawCalls = append(drawCalls, core.DrawCallInsight{
+				Index:         frameDrawIndex,
 				LineNum:       call.LineNum,
 				APIName:       call.APIName,
 				DrawType:      classifyDrawCall(call.APIName),
@@ -368,6 +376,7 @@ func ensureProgramUsage(usages map[int]*core.ProgramUsage, program *core.Program
 		SourceType:      program.SourceType,
 		Confidence:      program.Confidence,
 		ShaderIDs:       append([]int(nil), program.ShaderIDs...),
+		Shaders:         shaderUsageList(program.Shaders),
 		SourceAvailable: programHasSource(program),
 		BinarySizeBytes: program.BinarySizeBytes,
 	}
@@ -415,13 +424,32 @@ func updateTraceState(ctx *traceContextState, call core.APILogEntry) {
 		}
 	case "glActiveTexture":
 		if len(fields) >= 1 {
-			ctx.ActiveTexture = parseGLInt(fields[0])
+			ctx.ActiveTexture = normalizeTextureUnit(parseGLInt(fields[0]))
 		}
 	case "glBindTexture":
 		if len(fields) >= 2 {
 			ctx.Textures[ctx.ActiveTexture] = parseGLInt(fields[1])
 		}
 	}
+}
+
+func shaderUsageList(shaders []core.ShaderObjectInfo) []core.ShaderObjectInfo {
+	if len(shaders) == 0 {
+		return nil
+	}
+	result := make([]core.ShaderObjectInfo, 0, len(shaders))
+	for _, shader := range shaders {
+		shader.Source = ""
+		result = append(result, shader)
+	}
+	return result
+}
+
+func normalizeTextureUnit(value int) int {
+	if value >= 0x84C0 && value <= 0x84DF {
+		return value - 0x84C0
+	}
+	return value
 }
 
 func shaderTypeFromParams(params string) string {

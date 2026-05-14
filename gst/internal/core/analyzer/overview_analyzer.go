@@ -58,11 +58,22 @@ func (oa *OverviewAnalyzer) buildPerformance() core.OverviewPerformance {
 		return core.OverviewPerformance{}
 	}
 
-	// 收集帧时间
-	times := make([]int64, n)
-	for i, f := range frames {
-		times[i] = f.TotalTimeUs
+	// 收集有真实耗时来源的帧时间。没有 frame cost/profile 的 rawtrace 不参与百分位统计。
+	times := make([]int64, 0, n)
+	for _, f := range frames {
+		if f.HasTiming || f.TotalTimeUs > 0 {
+			times = append(times, f.TotalTimeUs)
+		}
 	}
+	if len(times) == 0 {
+		fa := NewFrameAnalyzer(oa.log)
+		return core.OverviewPerformance{
+			FrameTime:      core.OverviewFrameTime{},
+			SlowFramesTop5: fa.FindTopSlowFrames(5),
+			BottleneckHint: "无真实耗时数据（当前 rawtrace 未提供 frame cost/profile 耗时）",
+		}
+	}
+	n = len(times)
 	sort.Slice(times, func(i, j int) bool { return times[i] < times[j] })
 
 	// 统计
@@ -165,15 +176,27 @@ func (oa *OverviewAnalyzer) buildResources() core.OverviewResources {
 	var bufferTotalSize int64
 
 	for _, frame := range oa.log.Frames {
-		totalAPICalls += len(frame.APICalls)
+		if frame.APICallCount > 0 {
+			totalAPICalls += frame.APICallCount
+		} else {
+			totalAPICalls += len(frame.APICalls)
+		}
 		shaderCount += len(frame.Shaders)
 		bufferCount += len(frame.BufferCreations)
 		for _, buf := range frame.BufferCreations {
 			bufferTotalSize += buf.Size
 		}
-		for _, call := range frame.APICalls {
-			if strings.HasPrefix(call.APIName, "glDraw") {
-				drawCallCount++
+		if frame.DrawCallCount > 0 && len(frame.APICalls) == 0 {
+			drawCallCount += frame.DrawCallCount
+		} else {
+			for _, call := range frame.APICalls {
+				if isDrawCall(call.APIName) {
+					if call.Count > 0 {
+						drawCallCount += call.Count
+					} else {
+						drawCallCount++
+					}
+				}
 			}
 		}
 	}
@@ -213,6 +236,9 @@ func (oa *OverviewAnalyzer) classifyBottleneck(avgUs, p95Us int64) string {
 	apiRatio := float64(totalAPIUs) / float64(totalUs)
 
 	// 帧时间稳定性
+	if avgUs == 0 {
+		return "无真实耗时数据（当前 rawtrace 未提供 frame cost/profile 耗时）"
+	}
 	variance := float64(p95Us-avgUs) / float64(avgUs) // p95/avg ratio
 
 	var parts []string
@@ -241,8 +267,10 @@ func (oa *OverviewAnalyzer) buildSummary(basic core.OverviewBasic, perf core.Ove
 
 	if basic.FPS > 0 {
 		parts = append(parts, fmt.Sprintf("%.1fFPS", basic.FPS))
-	} else {
+	} else if basic.TotalTimeMs > 0 {
 		parts = append(parts, fmt.Sprintf("总耗时%.1f秒", float64(basic.TotalTimeMs)/1000.0))
+	} else {
+		parts = append(parts, "无真实耗时数据")
 	}
 
 	if diag.TotalFindings > 0 {
@@ -294,40 +322,64 @@ func analyzePerformanceWorkflow(log *core.ParsedLog, format string) *core.Workfl
 	funcStats := funcAna.Analyze()
 	summary := fa.GetFrameSummary()
 
-	// 计算P95帧时间
-	sortedTimes := make([]int64, len(log.Frames))
-	for i, f := range log.Frames {
-		sortedTimes[i] = f.TotalTimeUs
-	}
+	// 计算有真实耗时来源的帧时间，rawtrace 中未标记耗时的帧不参与性能分位数。
+	sortedTimes, timedTotalUs := timedFrameTimes(log.Frames)
 	sort.Slice(sortedTimes, func(i, j int) bool { return sortedTimes[i] < sortedTimes[j] })
-	p95Idx := min(int(float64(len(sortedTimes))*0.95), len(sortedTimes)-1)
-	p95Us := sortedTimes[p95Idx]
+	p95Us := int64(0)
+	if len(sortedTimes) > 0 {
+		p95Idx := min(int(float64(len(sortedTimes))*0.95), len(sortedTimes)-1)
+		p95Us = sortedTimes[p95Idx]
+	}
 
 	var conclusion string
 	var evidence []string
 
 	if summary != nil {
-		fps := float64(len(log.Frames)) / (float64(summary.TotalTimeUs) / 1e6)
-		if fps < 30 {
-			conclusion = fmt.Sprintf("帧率过低(%.1f FPS), 需要优化", fps)
-		} else if fps < 60 {
-			conclusion = fmt.Sprintf("帧率偏低(%.1f FPS), 有优化空间", fps)
+		if timedTotalUs <= 0 || len(sortedTimes) == 0 {
+			conclusion = "当前日志无真实耗时数据，性能工作流仅能基于调用密度定位热点"
+			evidence = append(evidence, "未检测到 frame cost/profile 耗时，无法计算真实 FPS/P95")
 		} else {
-			conclusion = fmt.Sprintf("帧率正常(%.1f FPS)", fps)
+			fps := log.FPS
+			if fps <= 0 {
+				fps = float64(len(sortedTimes)) / (float64(timedTotalUs) / 1e6)
+			}
+			if fps < 30 {
+				conclusion = fmt.Sprintf("帧率过低(%.1f FPS), 需要优化", fps)
+			} else if fps < 60 {
+				conclusion = fmt.Sprintf("帧率偏低(%.1f FPS), 有优化空间", fps)
+			} else {
+				conclusion = fmt.Sprintf("帧率正常(%.1f FPS)", fps)
+			}
+			evidence = append(evidence, fmt.Sprintf("有耗时来源帧: %d/%d", len(sortedTimes), len(log.Frames)))
+			if log.FPS > 0 {
+				evidence = append(evidence, fmt.Sprintf("日志FPS: %.1f", log.FPS))
+			}
+			evidence = append(evidence, fmt.Sprintf("平均帧时间: %.2f ms", float64(timedTotalUs)/float64(len(sortedTimes))/1000.0))
+			evidence = append(evidence, fmt.Sprintf("最大帧时间: %.2f ms", float64(sortedTimes[len(sortedTimes)-1])/1000.0))
+			evidence = append(evidence, fmt.Sprintf("P95帧时间: %.2f ms", float64(p95Us)/1000.0))
 		}
-		evidence = append(evidence, fmt.Sprintf("平均帧时间: %.2f ms", float64(summary.AvgTimeUs)/1000.0))
-		evidence = append(evidence, fmt.Sprintf("最大帧时间: %.2f ms", float64(summary.MaxTimeUs)/1000.0))
-		evidence = append(evidence, fmt.Sprintf("P95帧时间: %.2f ms", float64(p95Us)/1000.0))
 	}
 
-	// 最耗时的函数
+	// rawtrace 通常没有函数级耗时，此时按调用次数暴露热点，避免显示伪造的 0ms。
 	if len(funcStats) > 0 {
 		top := funcStats[0]
-		evidence = append(evidence, fmt.Sprintf("最耗时函数: %s (%d次调用, %.2f ms)", top.FuncName, top.CallCount, float64(top.TotalTimeUs)/1000.0))
+		if top.TotalTimeUs > 0 {
+			evidence = append(evidence, fmt.Sprintf("最耗时函数: %s", formatFuncHotspot(top)))
+		} else {
+			evidence = append(evidence, fmt.Sprintf("调用次数最高函数: %s", formatFuncHotspot(top)))
+		}
 	}
 
 	if len(topFrames) > 0 {
-		evidence = append(evidence, fmt.Sprintf("最慢帧: Frame %d (%.2f ms)", topFrames[0].FrameNum, float64(topFrames[0].TotalTimeUs)/1000.0))
+		if topFrames[0].TotalTimeUs > 0 {
+			evidence = append(evidence, fmt.Sprintf("最慢帧: Frame %d (%.2f ms)", topFrames[0].FrameNum, float64(topFrames[0].TotalTimeUs)/1000.0))
+		} else {
+			count := topFrames[0].APICallCount
+			if count == 0 {
+				count = len(topFrames[0].APICalls)
+			}
+			evidence = append(evidence, fmt.Sprintf("调用密度最高帧: Frame %d (%d API调用)", topFrames[0].FrameNum, count))
+		}
 	}
 
 	return &core.WorkflowResult{
@@ -340,6 +392,19 @@ func analyzePerformanceWorkflow(log *core.ParsedLog, format string) *core.Workfl
 			"frame_summary":   summary,
 		},
 	}
+}
+
+func timedFrameTimes(frames []core.FrameInfo) ([]int64, int64) {
+	times := make([]int64, 0, len(frames))
+	var total int64
+	for _, frame := range frames {
+		if !frame.HasTiming && frame.TotalTimeUs <= 0 {
+			continue
+		}
+		times = append(times, frame.TotalTimeUs)
+		total += frame.TotalTimeUs
+	}
+	return times, total
 }
 
 func analyzeCrashWorkflow(log *core.ParsedLog, format string) *core.WorkflowResult {

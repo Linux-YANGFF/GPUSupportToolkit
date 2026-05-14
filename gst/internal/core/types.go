@@ -18,14 +18,25 @@ type FrameInfo struct {
 	FrameNum         int
 	StartLine        int
 	EndLine          int
+	StartOffset      int64 `json:"-"`
+	EndOffset        int64 `json:"-"`
+	FullStartLine    int   `json:"-"`
+	FullEndLine      int   `json:"-"`
+	FullStartOffset  int64 `json:"-"`
+	FullEndOffset    int64 `json:"-"`
 	TotalTimeUs      int64
 	SwapBufferTimeUs int64 // swapBuffers 耗时
 	APITotalTimeUs   int64 // API 调用总耗时（不含 swapBuffers）
+	APICallCount     int   // raw API 调用数；APICalls 被按需读取时使用
+	DrawCallCount    int   // raw draw call 数；APICalls 被按需读取时使用
+	HasTiming        bool
+	TimingSource     string // profile, frame_cost, none
 	APICalls         []APILogEntry
 	APISummary       map[string]*APISummary
 	Shaders          []*ShaderInfo
-	Programs         []int        // Program IDs used in this frame (from glUseProgram)
-	BufferCreations  []BufferInfo // Buffers created in this frame
+	Programs         []int          // Program IDs used in this frame (from glUseProgram)
+	BufferCreations  []BufferInfo   // Buffers created in this frame
+	ContextPrograms  map[string]int `json:"-"` // active program per gc at frame start
 }
 
 type BufferInfo struct {
@@ -39,6 +50,9 @@ type ParsedLog struct {
 	Frames      []FrameInfo
 	TotalTimeUs int64
 	FPS         float64
+	Indexed     bool           `json:"-"`
+	SourcePath  string         `json:"-"`
+	Trace       *TraceAnalysis `json:"-"`
 }
 
 type SearchResult struct {
@@ -232,11 +246,13 @@ type DrawCallStats struct {
 	IndirectCount     int   `json:"indirect_count"`
 	ComputeCount      int   `json:"compute_count"`
 	TimeUs            int64 `json:"time_us"`
+	HasTiming         bool  `json:"has_timing"`
 }
 
 type DrawCallSummary struct {
 	TotalDrawCalls       int             `json:"total_draw_calls"`
 	DrawCallsPerFrameAvg float64         `json:"draw_calls_per_frame_avg"`
+	HasTiming            bool            `json:"has_timing"`
 	ByType               map[string]int  `json:"by_type"`
 	Frames               []DrawCallStats `json:"frames"`
 }
@@ -273,16 +289,17 @@ type ProgramInfo struct {
 }
 
 type ProgramUsage struct {
-	ProgramID       int    `json:"program_id"`
-	SourceType      string `json:"source_type"`
-	Confidence      string `json:"confidence"`
-	ShaderIDs       []int  `json:"shader_ids"`
-	DrawCallCount   int    `json:"draw_call_count"`
-	UseCount        int    `json:"use_count"`
-	FirstLine       int    `json:"first_line,omitempty"`
-	LastLine        int    `json:"last_line,omitempty"`
-	SourceAvailable bool   `json:"source_available"`
-	BinarySizeBytes int    `json:"binary_size_bytes,omitempty"`
+	ProgramID       int                `json:"program_id"`
+	SourceType      string             `json:"source_type"`
+	Confidence      string             `json:"confidence"`
+	ShaderIDs       []int              `json:"shader_ids"`
+	Shaders         []ShaderObjectInfo `json:"shaders,omitempty"`
+	DrawCallCount   int                `json:"draw_call_count"`
+	UseCount        int                `json:"use_count"`
+	FirstLine       int                `json:"first_line,omitempty"`
+	LastLine        int                `json:"last_line,omitempty"`
+	SourceAvailable bool               `json:"source_available"`
+	BinarySizeBytes int                `json:"binary_size_bytes,omitempty"`
 }
 
 type ProgramSegment struct {
@@ -293,6 +310,7 @@ type ProgramSegment struct {
 }
 
 type DrawCallInsight struct {
+	Index         int         `json:"index"`
 	LineNum       int         `json:"line_num"`
 	APIName       string      `json:"api_name"`
 	DrawType      string      `json:"draw_type"`
@@ -312,6 +330,9 @@ type FrameProgramInsight struct {
 	FrameNum       int              `json:"frame_num"`
 	StartLine      int              `json:"start_line"`
 	EndLine        int              `json:"end_line"`
+	HasTiming      bool             `json:"has_timing"`
+	TotalTimeUs    int64            `json:"total_time_us"`
+	APICallCount   int              `json:"api_call_count"`
 	TotalDrawCalls int              `json:"total_draw_calls"`
 	Programs       []ProgramUsage   `json:"programs"`
 	Segments       []ProgramSegment `json:"segments"`
@@ -335,20 +356,25 @@ type TraceAnalysis struct {
 // Texture types
 
 type TextureInfo struct {
-	ID       int    `json:"id"`
-	Target   string `json:"target"` // e.g., "GL_TEXTURE_2D"
-	Width    int    `json:"width,omitempty"`
-	Height   int    `json:"height,omitempty"`
-	Format   string `json:"format,omitempty"`
-	Created  bool   `json:"created"`
-	Bound    bool   `json:"bound"`
-	Deleted  bool   `json:"deleted"`
-	FrameNum int    `json:"frame_num,omitempty"`
+	ID           int    `json:"id"`
+	Target       string `json:"target"` // e.g., "GL_TEXTURE_2D"
+	Width        int    `json:"width,omitempty"`
+	Height       int    `json:"height,omitempty"`
+	Format       string `json:"format,omitempty"`
+	Created      bool   `json:"created"`
+	Bound        bool   `json:"bound"`
+	Deleted      bool   `json:"deleted"`
+	FrameNum     int    `json:"frame_num,omitempty"`
+	CreateLine   int    `json:"create_line,omitempty"`
+	LastBindLine int    `json:"last_bind_line,omitempty"`
+	Source       string `json:"source,omitempty"` // generated, inferred
+	BindCount    int    `json:"bind_count"`
 }
 
 type TextureSummary struct {
 	TotalTextures  int            `json:"total_textures"`
 	ActiveTextures int            `json:"active_textures"`
+	InferredCount  int            `json:"inferred_count"`
 	LeakedTextures []TextureInfo  `json:"leaked_textures"`
 	ByTarget       map[string]int `json:"by_target"`
 }
@@ -362,10 +388,12 @@ const (
 	BottleneckGPU      BottleneckType = "gpu_bound"
 	BottleneckBalanced BottleneckType = "balanced"
 	BottleneckUnstable BottleneckType = "unstable"
+	BottleneckUnknown  BottleneckType = "unknown"
 )
 
 type BottleneckAnalysis struct {
 	Type          BottleneckType `json:"type"`
+	HasTiming     bool           `json:"has_timing"`
 	Confidence    float64        `json:"confidence"`     // 0.0 - 1.0
 	SwapRatio     float64        `json:"swap_ratio"`     // SwapBuffer时间占比
 	APIRatio      float64        `json:"api_ratio"`      // API调用时间占比

@@ -109,6 +109,26 @@ func (p *RawTraceParser) Parse(reader io.Reader) (*core.ParsedLog, error) {
 			}
 		}
 
+		if matches := fpsRegex.FindStringSubmatch(normalized); len(matches) > 1 {
+			if fps, err := strconv.ParseFloat(matches[1], 64); err == nil {
+				parsedLog.FPS = fps
+			}
+			continue
+		}
+
+		if matches := swapBuffersRegex.FindStringSubmatch(normalized); len(matches) > 2 {
+			swapTimeUs, _ := strconv.ParseInt(matches[2], 10, 64)
+			applySwapTiming(&parsedLog, currentFrame, swapTimeUs)
+			continue
+		}
+
+		if matches := frameCostRegex.FindStringSubmatch(normalized); len(matches) > 3 {
+			frameID, _ := strconv.Atoi(matches[2])
+			frameCostMs, _ := strconv.ParseInt(matches[3], 10, 64)
+			applyFrameCostTiming(&parsedLog, currentFrame, frameID, frameCostMs*1000)
+			continue
+		}
+
 		if apiName, value, ok := parseReturnLine(normalized); ok {
 			if value == "" {
 				pendingReturnAPI = apiName
@@ -156,7 +176,7 @@ func (p *RawTraceParser) Parse(reader io.Reader) (*core.ParsedLog, error) {
 				entry.ErrorCode = "gl_error=" + matches[1]
 			}
 			ensureFrame(&currentFrame, frameNum, lineNum)
-			currentFrame.APICalls = append(currentFrame.APICalls, entry)
+			appendRawCall(currentFrame, entry)
 			continue
 		}
 
@@ -176,7 +196,7 @@ func (p *RawTraceParser) Parse(reader io.Reader) (*core.ParsedLog, error) {
 				RawParams: line,
 			}
 			ensureFrame(&currentFrame, frameNum, lineNum)
-			currentFrame.APICalls = append(currentFrame.APICalls, entry)
+			appendRawCall(currentFrame, entry)
 			continue
 		}
 
@@ -191,11 +211,12 @@ func (p *RawTraceParser) Parse(reader io.Reader) (*core.ParsedLog, error) {
 		// Frame boundary detection
 		if isRawFrameBoundary(apiName) {
 			if currentFrame != nil {
-				currentFrame.EndLine = lineNum - 1
+				currentFrame.EndLine = lineNum
+				finalizeRawFrame(currentFrame)
 				parsedLog.Frames = append(parsedLog.Frames, *currentFrame)
 				currentFrame = nil
+				frameNum++
 			}
-			frameNum++
 			continue
 		}
 
@@ -214,7 +235,7 @@ func (p *RawTraceParser) Parse(reader io.Reader) (*core.ParsedLog, error) {
 			HasNilPtr: hasNilPtr,
 		}
 
-		currentFrame.APICalls = append(currentFrame.APICalls, entry)
+		appendRawCall(currentFrame, entry)
 
 		if apiName == "glShaderSource" {
 			if shaderID := firstIntParam(params); shaderID > 0 {
@@ -257,13 +278,14 @@ func (p *RawTraceParser) Parse(reader io.Reader) (*core.ParsedLog, error) {
 	}
 	if currentFrame != nil {
 		currentFrame.EndLine = lineNum
+		finalizeRawFrame(currentFrame)
 		parsedLog.Frames = append(parsedLog.Frames, *currentFrame)
 	}
 
 	for _, frame := range parsedLog.Frames {
 		parsedLog.TotalTimeUs += frame.TotalTimeUs
 	}
-	if len(parsedLog.Frames) > 0 && parsedLog.TotalTimeUs > 0 {
+	if parsedLog.FPS == 0 && len(parsedLog.Frames) > 0 && parsedLog.TotalTimeUs > 0 {
 		parsedLog.FPS = float64(len(parsedLog.Frames)) * 1e6 / float64(parsedLog.TotalTimeUs)
 	}
 
@@ -319,14 +341,94 @@ func assignReturnToLastCall(frame *core.FrameInfo, apiName string, value string)
 func ensureFrame(frame **core.FrameInfo, frameNum int, lineNum int) {
 	if *frame == nil {
 		*frame = &core.FrameInfo{
-			FrameNum:    frameNum,
-			StartLine:   lineNum,
-			TotalTimeUs: 0,
-			APICalls:    []core.APILogEntry{},
-			APISummary:  make(map[string]*core.APISummary),
-			Shaders:     []*core.ShaderInfo{},
+			FrameNum:     frameNum,
+			StartLine:    lineNum,
+			TotalTimeUs:  0,
+			HasTiming:    false,
+			TimingSource: "none",
+			APICalls:     []core.APILogEntry{},
+			APISummary:   make(map[string]*core.APISummary),
+			Shaders:      []*core.ShaderInfo{},
 		}
 	}
+}
+
+func appendRawCall(frame *core.FrameInfo, entry core.APILogEntry) {
+	if frame == nil {
+		return
+	}
+	if entry.Count == 0 {
+		entry.Count = 1
+	}
+	frame.APICalls = append(frame.APICalls, entry)
+	if frame.APISummary == nil {
+		frame.APISummary = make(map[string]*core.APISummary)
+	}
+	summary, ok := frame.APISummary[entry.APIName]
+	if !ok {
+		frame.APISummary[entry.APIName] = &core.APISummary{
+			APIName: entry.APIName,
+			Count:   entry.Count,
+			TimeUs:  entry.TimeUs,
+		}
+		return
+	}
+	summary.Count += entry.Count
+	summary.TimeUs += entry.TimeUs
+}
+
+func finalizeRawFrame(frame *core.FrameInfo) {
+	if frame == nil {
+		return
+	}
+	if frame.TimingSource == "" {
+		frame.TimingSource = "none"
+	}
+	if frame.HasTiming && frame.TotalTimeUs > 0 {
+		frame.APITotalTimeUs = frame.TotalTimeUs - frame.SwapBufferTimeUs
+		if frame.APITotalTimeUs < 0 {
+			frame.APITotalTimeUs = 0
+		}
+	}
+}
+
+func applySwapTiming(log *core.ParsedLog, currentFrame *core.FrameInfo, swapTimeUs int64) {
+	frame := lastRawFrame(log, currentFrame, -1)
+	if frame == nil {
+		return
+	}
+	frame.SwapBufferTimeUs = swapTimeUs
+	finalizeRawFrame(frame)
+}
+
+func applyFrameCostTiming(log *core.ParsedLog, currentFrame *core.FrameInfo, frameNum int, totalTimeUs int64) {
+	frame := lastRawFrame(log, currentFrame, frameNum)
+	if frame == nil {
+		return
+	}
+	frame.TotalTimeUs = totalTimeUs
+	frame.HasTiming = totalTimeUs > 0
+	if frame.HasTiming {
+		frame.TimingSource = "frame_cost"
+	}
+	finalizeRawFrame(frame)
+}
+
+func lastRawFrame(log *core.ParsedLog, currentFrame *core.FrameInfo, frameNum int) *core.FrameInfo {
+	if frameNum >= 0 {
+		for i := len(log.Frames) - 1; i >= 0; i-- {
+			if log.Frames[i].FrameNum == frameNum {
+				return &log.Frames[i]
+			}
+		}
+		if currentFrame != nil && currentFrame.FrameNum == frameNum {
+			return currentFrame
+		}
+	}
+	if len(log.Frames) > 0 {
+		return &log.Frames[len(log.Frames)-1]
+	}
+	return currentFrame
 }
 
 func extractGCTID(line string) (gcAddr, tid, workLine string) {
@@ -377,6 +479,17 @@ func parseAPICall(line string) (string, string) {
 	if len(parts) >= 1 {
 		apiName := parts[0]
 		if strings.HasPrefix(apiName, "gl") || strings.HasPrefix(apiName, "egl") || strings.HasPrefix(apiName, "glut") {
+			if idx := strings.Index(apiName, "("); idx > 0 {
+				name := apiName[:idx]
+				params := strings.TrimSuffix(apiName[idx+1:], ")")
+				if len(parts) > 1 {
+					if params != "" {
+						params += " "
+					}
+					params += strings.Join(parts[1:], " ")
+				}
+				return name, strings.TrimSpace(params)
+			}
 			if len(parts) > 1 {
 				return apiName, strings.Join(parts[1:], " ")
 			}

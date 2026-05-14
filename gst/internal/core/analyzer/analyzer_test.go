@@ -1,8 +1,8 @@
 package analyzer
 
 import (
-	"testing"
 	"gst/internal/core"
+	"testing"
 )
 
 func createTestParsedLog() *core.ParsedLog {
@@ -75,6 +75,98 @@ func TestFrameAnalyzer_FindTopSlowFrames(t *testing.T) {
 	top2 := analyzer.FindTopSlowFrames(2)
 	if top2[0].TotalTimeUs < top2[1].TotalTimeUs {
 		t.Error("Top frames should be sorted by TotalTimeUs descending")
+	}
+}
+
+func TestDrawCallAnalyzer_ExcludesDrawBuffersAndCountsAggregates(t *testing.T) {
+	log := &core.ParsedLog{
+		Frames: []core.FrameInfo{
+			{
+				FrameNum: 0,
+				APICalls: []core.APILogEntry{
+					{APIName: "glDrawBuffers", Count: 1},
+					{APIName: "glDrawArrays", Count: 3},
+					{APIName: "glDrawElements", Count: 2},
+				},
+			},
+		},
+	}
+
+	summary := NewDrawCallAnalyzer(log).GetSummary()
+	if summary == nil {
+		t.Fatal("GetSummary returned nil")
+	}
+	if summary.TotalDrawCalls != 5 {
+		t.Fatalf("TotalDrawCalls = %d, want 5", summary.TotalDrawCalls)
+	}
+	if summary.ByType["draw_arrays"] != 3 || summary.ByType["draw_elements"] != 2 {
+		t.Fatalf("unexpected draw types: %+v", summary.ByType)
+	}
+}
+
+func TestTextureAnalyzer_UsesGeneratedReturnIDsAndInferredBindings(t *testing.T) {
+	log := &core.ParsedLog{
+		Frames: []core.FrameInfo{
+			{
+				FrameNum: 2,
+				APICalls: []core.APILogEntry{
+					{APIName: "glGenTextures", RawParams: "1", ReturnValue: "7", LineNum: 10},
+					{APIName: "glBindTexture", RawParams: "0x0DE1 7", LineNum: 11},
+					{APIName: "glTexImage2D", RawParams: "0x0DE1 0 0x1908 64 32 0 0x1908 0x1401 (nil)", LineNum: 12},
+					{APIName: "glBindTexture", RawParams: "0x8513 8", LineNum: 13},
+					{APIName: "glTexImage2D", RawParams: "0x8515 0 0x1908 16 16 0 0x1908 0x1401 (nil)", LineNum: 14},
+				},
+			},
+		},
+	}
+
+	summary := NewTextureAnalyzer(log).GetSummary()
+	if summary.TotalTextures != 2 {
+		t.Fatalf("TotalTextures = %d, want 2", summary.TotalTextures)
+	}
+	if summary.InferredCount != 1 {
+		t.Fatalf("InferredCount = %d, want 1", summary.InferredCount)
+	}
+	if summary.ByTarget["GL_TEXTURE_2D"] != 1 || summary.ByTarget["GL_TEXTURE_CUBE_MAP"] != 1 {
+		t.Fatalf("unexpected targets: %+v", summary.ByTarget)
+	}
+	if len(summary.LeakedTextures) != 1 {
+		t.Fatalf("leaked generated textures = %d, want 1", len(summary.LeakedTextures))
+	}
+	tex := summary.LeakedTextures[0]
+	if tex.ID != 7 || tex.Width != 64 || tex.Height != 32 || tex.Format != "GL_RGBA" {
+		t.Fatalf("unexpected generated texture info: %+v", tex)
+	}
+}
+
+func TestTextureAnalyzer_IndexedSummaryFallback(t *testing.T) {
+	log := &core.ParsedLog{
+		Indexed: true,
+		Frames: []core.FrameInfo{
+			{
+				FrameNum: 1,
+				APISummary: map[string]*core.APISummary{
+					"glBindTexture":    {APIName: "glBindTexture", Count: 8},
+					"glTexImage2D":     {APIName: "glTexImage2D", Count: 3},
+					"glTexSubImage2D":  {APIName: "glTexSubImage2D", Count: 5},
+					"glDeleteTextures": {APIName: "glDeleteTextures", Count: 1},
+				},
+			},
+		},
+	}
+
+	summary := NewTextureAnalyzer(log).GetSummary()
+	if summary.TotalTextures != 8 {
+		t.Fatalf("TotalTextures = %d, want 8", summary.TotalTextures)
+	}
+	if summary.ActiveTextures != 7 {
+		t.Fatalf("ActiveTextures = %d, want 7", summary.ActiveTextures)
+	}
+	if summary.InferredCount != 8 {
+		t.Fatalf("InferredCount = %d, want 8", summary.InferredCount)
+	}
+	if summary.ByTarget["GL_TEXTURE_2D"] != 8 {
+		t.Fatalf("GL_TEXTURE_2D count = %d, want 8", summary.ByTarget["GL_TEXTURE_2D"])
 	}
 }
 

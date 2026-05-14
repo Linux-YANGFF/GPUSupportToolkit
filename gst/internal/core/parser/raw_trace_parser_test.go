@@ -235,6 +235,49 @@ func TestRawTraceParser_ReturnValuesAndShaderSource(t *testing.T) {
 	}
 }
 
+func TestRawTraceParser_FrameCostAndSwapTiming(t *testing.T) {
+	input := `[ 1] (gc=0x1, tid=0x2): glClear 0x4100
+[ 2] (gc=0x1, tid=0x2): glDrawArrays 0x0004 0 3
+[ 3] glXSwapBuffers: dpy = 0x1, drawable = 2
+[ 4] swapBuffers: 1234 us
+[ 5] 0 frame cost 16ms
+libGL: FPS = 60.0`
+
+	parser := NewRawTraceParser()
+	parsed, err := parser.Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	if len(parsed.Frames) != 1 {
+		t.Fatalf("Expected 1 frame, got %d", len(parsed.Frames))
+	}
+	frame := parsed.Frames[0]
+	if !frame.HasTiming {
+		t.Fatal("frame should have timing from frame cost")
+	}
+	if frame.TimingSource != "frame_cost" {
+		t.Fatalf("TimingSource = %q, want frame_cost", frame.TimingSource)
+	}
+	if frame.TotalTimeUs != 16000 {
+		t.Fatalf("TotalTimeUs = %d, want 16000", frame.TotalTimeUs)
+	}
+	if frame.SwapBufferTimeUs != 1234 {
+		t.Fatalf("SwapBufferTimeUs = %d, want 1234", frame.SwapBufferTimeUs)
+	}
+	if frame.APITotalTimeUs != 14766 {
+		t.Fatalf("APITotalTimeUs = %d, want 14766", frame.APITotalTimeUs)
+	}
+	if parsed.TotalTimeUs != 16000 {
+		t.Fatalf("Parsed TotalTimeUs = %d, want 16000", parsed.TotalTimeUs)
+	}
+	if parsed.FPS != 60.0 {
+		t.Fatalf("FPS = %f, want 60.0", parsed.FPS)
+	}
+	if frame.APISummary["glDrawArrays"] == nil || frame.APISummary["glDrawArrays"].Count != 1 {
+		t.Fatalf("APISummary missing glDrawArrays: %+v", frame.APISummary)
+	}
+}
+
 func TestRawTraceParser_ContextManagement(t *testing.T) {
 	input := `(gc=0xa, tid=0xb): glXMakeCurrent: dpy = 0x1c00, drawable = 121
 (gc=0xa, tid=0xb): glXCreateContextAttribsARB: dpy = 0x1c00, config = 0x8b, share_list = 0

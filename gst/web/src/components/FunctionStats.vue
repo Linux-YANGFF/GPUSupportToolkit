@@ -5,6 +5,7 @@ const ctx = inject<any>('ctx')
 if (!ctx) throw new Error('Missing provide ctx')
 
 const {
+  parseResult,
   overview,
   bottleneck,
   drawCallSummary,
@@ -13,15 +14,9 @@ const {
   topFrames,
   shaderStats,
   selectedTopFrame,
-  selectedTopFrameFuncStats,
-  workflowResults,
-  workflowLoading,
-  workflowLabels,
 } = ctx
 
-const { selectTopFrame, toggleShaderExpand, runWorkflow } = ctx
-
-const workflowIds = ['performance', 'crash', 'rendering', 'memory']
+const { selectTopFrame, toggleShaderExpand, downloadFrameLog } = ctx
 
 const bottleneckLabel = computed(() => {
   const type = bottleneck.value?.type
@@ -29,6 +24,7 @@ const bottleneckLabel = computed(() => {
   if (type === 'gpu_bound') return 'GPU Bound'
   if (type === 'balanced') return 'Balanced'
   if (type === 'unstable') return 'Unstable'
+  if (type === 'unknown') return 'No Timing'
   return '—'
 })
 
@@ -37,14 +33,54 @@ function ms(us?: number): string {
   return (us / 1000).toFixed(3)
 }
 
+function frameMs(frame: { duration_ms?: number | null; has_timing?: boolean }): string {
+  if (!frame.has_timing) return '—'
+  return frame.duration_ms != null ? frame.duration_ms.toFixed(3) : '—'
+}
+
+function drawFrameMs(frame: { time_us?: number; has_timing?: boolean }): string {
+  if (!frame.has_timing) return '—'
+  return `${ms(frame.time_us)} ms`
+}
+
+function analysisMs(us?: number): string {
+  if (!parseResult.value?.has_timing) return '—'
+  return ms(us)
+}
+
 function pct(value?: number): string {
   if (value == null) return '—'
-  return `${Math.round(value * 100)}%`
+  const normalized = Math.max(0, Math.min(1, value))
+  return `${Math.round(normalized * 100)}%`
 }
 
 function numberText(value?: number): string {
   if (value == null) return '—'
   return value.toLocaleString()
+}
+
+function shaderKind(shader: { kind?: string }): string {
+  return shader.kind === 'api_stat' ? 'API 统计' : '源码'
+}
+
+function shaderName(shader: { id?: number; api_name?: string; kind?: string }): string {
+  if (shader.kind === 'api_stat') return shader.api_name || '—'
+  return shader.id != null ? `Shader #${shader.id}` : 'Shader'
+}
+
+function shaderTime(shader: { time_us?: number }): string {
+  if (!shader.time_us) return '—'
+  return shader.time_us.toLocaleString()
+}
+
+function shaderCount(shader: { count?: number }): string {
+  if (!shader.count) return '—'
+  return shader.count.toLocaleString()
+}
+
+function downloadTopFrame(event: MouseEvent, frame: any) {
+  event.stopPropagation()
+  downloadFrameLog(frame)
 }
 </script>
 
@@ -62,19 +98,15 @@ function numberText(value?: number): string {
         </div>
         <div class="mini-stat">
           <span class="mini-label">P95 帧耗时</span>
-          <strong>{{ ms(overview.performance.frame_time.p95_us) }}<small>ms</small></strong>
+          <strong>{{ analysisMs(overview.performance.frame_time.p95_us) }}<small v-if="parseResult?.has_timing">ms</small></strong>
         </div>
         <div class="mini-stat">
           <span class="mini-label">P99 帧耗时</span>
-          <strong>{{ ms(overview.performance.frame_time.p99_us) }}<small>ms</small></strong>
+          <strong>{{ analysisMs(overview.performance.frame_time.p99_us) }}<small v-if="parseResult?.has_timing">ms</small></strong>
         </div>
         <div class="mini-stat">
           <span class="mini-label">API 调用</span>
           <strong>{{ numberText(overview.resources.total_api_calls) }}</strong>
-        </div>
-        <div class="mini-stat">
-          <span class="mini-label">诊断问题</span>
-          <strong>{{ overview.diagnosis_summary.total_findings }}</strong>
         </div>
       </div>
     </div>
@@ -114,6 +146,7 @@ function numberText(value?: number): string {
             <strong class="mono">{{ bottleneck.top_bottleneck || '—' }}</strong>
           </div>
           <p v-if="overview" class="hint-text">{{ overview.performance.bottleneck_hint }}</p>
+          <p v-if="bottleneck.details" class="hint-text">{{ bottleneck.details }}</p>
         </div>
       </div>
 
@@ -145,9 +178,10 @@ function numberText(value?: number): string {
             <div v-for="frame in hotDrawFrames" :key="frame.frame_num" class="compact-row">
               <span>#{{ frame.frame_num }}</span>
               <span>{{ frame.total_draw_calls }}</span>
-              <span>{{ ms(frame.time_us) }} ms</span>
+              <span>{{ drawFrameMs(frame) }}</span>
             </div>
           </div>
+          <p v-if="!drawCallSummary.has_timing" class="hint-text">当前日志没有真实帧耗时，热帧按 DrawCall 数排序。</p>
         </div>
       </div>
 
@@ -170,6 +204,10 @@ function numberText(value?: number): string {
             <strong>{{ textureSummary.active_textures }}</strong>
           </div>
           <div class="metric-row">
+            <span>推断纹理</span>
+            <strong>{{ textureSummary.inferred_count }}</strong>
+          </div>
+          <div class="metric-row">
             <span>疑似泄漏</span>
             <strong>{{ textureSummary.leaked_textures.length }}</strong>
           </div>
@@ -189,35 +227,6 @@ function numberText(value?: number): string {
         </div>
       </div>
 
-      <div class="analyze-block">
-        <div class="analyze-block-header">
-          <h4>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
-            </svg>
-            工作流分析
-          </h4>
-        </div>
-        <div class="workflow-panel">
-          <div class="workflow-buttons">
-            <button
-              v-for="id in workflowIds"
-              :key="id"
-              class="btn btn-sm btn-default"
-              :disabled="workflowLoading !== null"
-              @click="runWorkflow(id)"
-            >
-              {{ workflowLoading === id ? '分析中...' : workflowLabels[id] }}
-            </button>
-          </div>
-          <div v-for="id in workflowIds" :key="id" v-show="workflowResults[id]" class="workflow-result">
-            <h5>{{ workflowLabels[id] }}: {{ workflowResults[id]?.conclusion }}</h5>
-            <ul>
-              <li v-for="item in workflowResults[id]?.evidence || []" :key="item">{{ item }}</li>
-            </ul>
-          </div>
-        </div>
-      </div>
     </div>
 
     <div class="analyze-grid lower-grid">
@@ -240,6 +249,7 @@ function numberText(value?: number): string {
                 <th>swapBuffers (ms)</th>
                 <th>API 耗时 (ms)</th>
                 <th>其他耗时 (ms)</th>
+                <th>操作</th>
               </tr>
             </thead>
             <tbody>
@@ -251,45 +261,22 @@ function numberText(value?: number): string {
               >
                 <td>{{ idx + 1 }}</td>
                 <td class="frame-id">#{{ frame.id }}</td>
-                <td class="mono">{{ frame.duration_ms.toFixed(3) }}</td>
-                <td class="mono">{{ frame.swapbuffers_ms != null ? frame.swapbuffers_ms.toFixed(3) : '—' }}</td>
-                <td class="mono">{{ frame.api_ms != null ? frame.api_ms.toFixed(3) : '—' }}</td>
-                <td class="mono">{{ frame.other_ms != null ? frame.other_ms.toFixed(3) : '—' }}</td>
+                <td class="mono">{{ frameMs(frame) }}</td>
+                <td class="mono">{{ frame.has_timing && frame.swapbuffers_ms != null ? frame.swapbuffers_ms.toFixed(3) : '—' }}</td>
+                <td class="mono">{{ frame.has_timing && frame.api_ms != null ? frame.api_ms.toFixed(3) : '—' }}</td>
+                <td class="mono">{{ frame.has_timing && frame.other_ms != null ? frame.other_ms.toFixed(3) : '—' }}</td>
+                <td>
+                  <button class="btn btn-sm btn-default" @click="downloadTopFrame($event, frame)">下载帧日志</button>
+                </td>
               </tr>
               <tr v-if="topFrames.length === 0">
-                <td colspan="6" style="text-align:center;color:var(--text-placeholder);padding:1.5rem;">暂无数据</td>
+                <td colspan="7" style="text-align:center;color:var(--text-placeholder);padding:1.5rem;">暂无数据</td>
               </tr>
             </tbody>
           </table>
         </div>
 
-        <div v-if="selectedTopFrame" class="detail-panel" style="margin:1rem;border-radius:var(--radius-md);">
-          <div class="detail-header">
-            <h3>帧 #{{ selectedTopFrame.id }} 函数统计 / Function Stats</h3>
-            <button class="btn btn-sm btn-default" @click="selectedTopFrame = null">关闭</button>
-          </div>
-          <div class="table-wrap" style="border:none;border-radius:0;">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>函数名 / Function</th>
-                  <th>调用次数 / Count</th>
-                  <th>总耗时 (μs)</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="func in selectedTopFrameFuncStats" :key="func.name">
-                  <td class="mono">{{ func.name }}</td>
-                  <td class="mono">{{ func.call_count }}</td>
-                  <td class="mono">{{ func.total_time_us }}</td>
-                </tr>
-                <tr v-if="!selectedTopFrameFuncStats || selectedTopFrameFuncStats.length === 0">
-                  <td colspan="3" style="text-align:center;color:var(--text-placeholder);padding:1rem;">暂无数据</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
+        <p class="hint-text" style="margin:0 1rem 1rem;">点击 Top 帧会打开与帧列表一致的详情弹窗，包含分类统计、关键 API 和原始日志下载。</p>
       </div>
 
       <div class="analyze-block">
@@ -300,33 +287,41 @@ function numberText(value?: number): string {
               <polyline points="2 17 12 22 22 17"/>
               <polyline points="2 12 12 17 22 12"/>
             </svg>
-            Shader 统计
+            Shader / Program 统计
           </h4>
         </div>
         <div class="table-wrap" style="border:none;border-radius:0;">
           <table class="data-table">
             <thead>
               <tr>
-                <th>Shader ID</th>
-                <th>源码预览 / Source Preview</th>
+                <th>对象 / API</th>
+                <th>类型</th>
+                <th>调用次数</th>
+                <th>总耗时 (μs)</th>
+                <th>内容 / Source Preview</th>
                 <th>操作 / Action</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="shader in shaderStats" :key="shader.id">
-                <td class="mono">{{ shader.id }}</td>
+              <tr v-for="shader in shaderStats" :key="`${shader.kind || 'source'}-${shader.api_name || shader.id}`">
+                <td class="mono">{{ shaderName(shader) }}</td>
+                <td>{{ shaderKind(shader) }}</td>
+                <td class="mono">{{ shaderCount(shader) }}</td>
+                <td class="mono">{{ shaderTime(shader) }}</td>
                 <td class="mono">
-                  <span v-if="!shader.expanded">{{ (shader.source || '').substring(0, 50) }}{{ (shader.source || '').length > 50 ? '...' : '' }}</span>
+                  <span v-if="shader.kind === 'api_stat'">{{ shader.source }}</span>
+                  <span v-else-if="!shader.expanded">{{ (shader.source || '').substring(0, 50) }}{{ (shader.source || '').length > 50 ? '...' : '' }}</span>
                   <pre v-else class="shader-source">{{ shader.command_line }}&#10;####&#10;{{ shader.source || '' }}&#10;####</pre>
                 </td>
                 <td>
-                  <button class="btn btn-sm btn-default" @click="toggleShaderExpand(shader)">
+                  <button v-if="shader.kind !== 'api_stat'" class="btn btn-sm btn-default" @click="toggleShaderExpand(shader)">
                     {{ shader.expanded ? '收起 / Collapse' : '展开 / Expand' }}
                   </button>
+                  <span v-else class="hint-text">—</span>
                 </td>
               </tr>
               <tr v-if="shaderStats.length === 0">
-                <td colspan="3" style="text-align:center;color:var(--text-placeholder);padding:1.5rem;">暂无数据</td>
+                <td colspan="6" style="text-align:center;color:var(--text-placeholder);padding:1.5rem;">暂无 Shader/Program 数据</td>
               </tr>
             </tbody>
           </table>

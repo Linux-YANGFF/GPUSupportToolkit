@@ -38,7 +38,7 @@ func classifyDrawCall(apiName string) string {
 }
 
 func isDrawCall(apiName string) bool {
-	return strings.HasPrefix(apiName, "glDraw") || strings.HasPrefix(apiName, "glDispatchCompute")
+	return classifyDrawCall(apiName) != ""
 }
 
 // AnalyzePerFrame 分析每帧的 draw call 统计
@@ -50,26 +50,26 @@ func (dca *DrawCallAnalyzer) AnalyzePerFrame() []core.DrawCallStats {
 	var results []core.DrawCallStats
 	for _, frame := range dca.log.Frames {
 		stats := core.DrawCallStats{
-			FrameNum: frame.FrameNum,
-			TimeUs:   frame.TotalTimeUs,
+			FrameNum:  frame.FrameNum,
+			TimeUs:    frame.TotalTimeUs,
+			HasTiming: frame.HasTiming || frame.TotalTimeUs > 0,
 		}
 
-		for _, call := range frame.APICalls {
-			if !isDrawCall(call.APIName) {
-				continue
+		if len(frame.APICalls) == 0 && frame.DrawCallCount > 0 {
+			for _, summary := range frame.APISummary {
+				addDrawCallStat(&stats, summary.APIName, summary.Count)
 			}
-			stats.TotalDrawCalls++
-			switch classifyDrawCall(call.APIName) {
-			case "draw_arrays":
-				stats.DrawArraysCount++
-			case "draw_elements":
-				stats.DrawElementsCount++
-			case "instanced":
-				stats.InstancedCount++
-			case "indirect":
-				stats.IndirectCount++
-			case "compute":
-				stats.ComputeCount++
+			if stats.TotalDrawCalls == 0 {
+				stats.TotalDrawCalls = frame.DrawCallCount
+				stats.DrawArraysCount = frame.DrawCallCount
+			}
+		} else {
+			for _, call := range frame.APICalls {
+				count := call.Count
+				if count <= 0 {
+					count = 1
+				}
+				addDrawCallStat(&stats, call.APIName, count)
 			}
 		}
 
@@ -86,10 +86,14 @@ func (dca *DrawCallAnalyzer) GetSummary() *core.DrawCallSummary {
 	}
 
 	var totalDrawCalls int
+	hasTiming := false
 	byType := make(map[string]int)
 
 	for _, f := range frames {
 		totalDrawCalls += f.TotalDrawCalls
+		if f.HasTiming {
+			hasTiming = true
+		}
 		byType["draw_arrays"] += f.DrawArraysCount
 		byType["draw_elements"] += f.DrawElementsCount
 		byType["instanced"] += f.InstancedCount
@@ -98,10 +102,11 @@ func (dca *DrawCallAnalyzer) GetSummary() *core.DrawCallSummary {
 	}
 
 	return &core.DrawCallSummary{
-		TotalDrawCalls:      totalDrawCalls,
+		TotalDrawCalls:       totalDrawCalls,
 		DrawCallsPerFrameAvg: float64(totalDrawCalls) / float64(len(frames)),
-		ByType:              byType,
-		Frames:              frames,
+		HasTiming:            hasTiming,
+		ByType:               byType,
+		Frames:               frames,
 	}
 }
 
@@ -113,6 +118,9 @@ func (dca *DrawCallAnalyzer) FindHotFrames(n int) []core.DrawCallStats {
 	}
 
 	sort.Slice(frames, func(i, j int) bool {
+		if frames[i].TotalDrawCalls == frames[j].TotalDrawCalls {
+			return frames[i].TimeUs > frames[j].TimeUs
+		}
 		return frames[i].TotalDrawCalls > frames[j].TotalDrawCalls
 	})
 
@@ -120,4 +128,26 @@ func (dca *DrawCallAnalyzer) FindHotFrames(n int) []core.DrawCallStats {
 		n = len(frames)
 	}
 	return frames[:n]
+}
+
+func addDrawCallStat(stats *core.DrawCallStats, apiName string, count int) {
+	if !isDrawCall(apiName) {
+		return
+	}
+	if count <= 0 {
+		count = 1
+	}
+	stats.TotalDrawCalls += count
+	switch classifyDrawCall(apiName) {
+	case "draw_arrays":
+		stats.DrawArraysCount += count
+	case "draw_elements":
+		stats.DrawElementsCount += count
+	case "instanced":
+		stats.InstancedCount += count
+	case "indirect":
+		stats.IndirectCount += count
+	case "compute":
+		stats.ComputeCount += count
+	}
 }

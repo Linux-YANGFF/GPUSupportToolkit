@@ -69,6 +69,12 @@ func main() {
 			h.GetFramePrograms(w, r)
 		case strings.HasSuffix(path, "/drawcalls"):
 			h.GetFrameDrawCalls(w, r)
+		case strings.HasSuffix(path, "/apis"):
+			h.GetFrameAPIs(w, r)
+		case strings.HasSuffix(path, "/raw-lines"):
+			h.GetFrameRawLines(w, r)
+		case strings.HasSuffix(path, "/download"):
+			h.DownloadFrameRawLog(w, r)
 		default:
 			h.GetFrameDetail(w, r)
 		}
@@ -76,6 +82,7 @@ func main() {
 	mux.HandleFunc("/api/log/search", h.Search)
 	mux.HandleFunc("/api/log/trace/programs", h.GetTracePrograms)
 	mux.HandleFunc("/api/log/trace/programs/", h.GetTraceProgramDetail)
+	mux.HandleFunc("/api/log/search/time", h.SearchTimeRange)
 	mux.HandleFunc("/api/log/analyze/top", h.AnalyzeTop)
 	mux.HandleFunc("/api/log/analyze/shaders", h.AnalyzeShaders)
 	mux.HandleFunc("/api/log/analyze/funcs", h.AnalyzeFuncs)
@@ -86,6 +93,10 @@ func main() {
 	mux.HandleFunc("/api/log/export", h.Export)
 	mux.HandleFunc("/api/overview", h.Overview)
 	mux.HandleFunc("/api/diagnose", h.HandleDiagnose)
+	mux.HandleFunc("/api/v2/cases/current/overview", h.GetV2CaseOverview)
+	mux.HandleFunc("/api/v2/cases/current/ai-summary", h.GetV2AISummary)
+	mux.HandleFunc("/api/v2/cases/current/frames", h.GetFrames)
+	mux.HandleFunc("/api/v2/cases/current/frames/", h.HandleV2CurrentFrame)
 	mux.HandleFunc("/api/shutdown", handleShutdown)
 	mux.HandleFunc("/health", h.Health)
 

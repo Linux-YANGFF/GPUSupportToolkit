@@ -14,14 +14,11 @@ GST is a GPU log analysis tool for parsing and analyzing apitrace/profile logs.
 ```bash
 cd gst
 
-# Download dependencies
-go mod tidy
+# Use Go 1.22+
+export PATH=/usr/local/go/bin:$PATH
 
-# Build gst-server
-go build -o bin/gst-server ./cmd/gst-server
-
-# Build gst-cli
-go build -o bin/gst-cli ./cmd/cli
+# Build web assets, gst-server, and gst-cli
+make build-all
 ```
 
 ### Run gst-server
@@ -68,6 +65,8 @@ Then open http://localhost:8080 in your browser.
 | Multi-format Export | TXT/CSV/JSON export |
 | **Bug Diagnosis** | 7 analyzers: null pointer, resource leak, shader error, API anti-pattern, perf anomaly, thread safety, driver error |
 | Structured Logging | Go 1.22+ `log/slog` with configurable levels |
+| AI JSON API | v2 HTTP endpoints and CLI JSON summaries for downstream AI tools |
+| Release Packages | Cross-architecture deb/rpm targets for Linux amd64 and arm64 |
 
 ## Log Formats Supported
 
@@ -108,4 +107,5 @@ gst/
 ## Documentation
 
 - [CLI Reference](docs/cli.md) - Complete gst-cli usage guide
+- [HTTP API Reference](docs/http-api.md) - gst-server REST endpoints
 - [Installation Guide](docs/install.md) - Install via deb/rpm packages

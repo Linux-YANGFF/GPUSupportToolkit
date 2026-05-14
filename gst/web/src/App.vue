@@ -6,8 +6,8 @@ import AnalysisTabs from './components/AnalysisTabs.vue'
 import FrameList from './components/FrameList.vue'
 import FunctionStats from './components/FunctionStats.vue'
 import SearchPanel from './components/SearchPanel.vue'
-import DiagnosisPanel from './components/DiagnosisPanel.vue'
 import TraceInspector from './components/TraceInspector.vue'
+import FrameDetailDialog from './components/FrameDetailDialog.vue'
 
 const ctx = useLogAnalysis()
 provide('ctx', ctx)
@@ -25,7 +25,7 @@ const {
   <div class="page-wrapper">
     <div class="page-title">
       <h2>日志分析</h2>
-      <p>上传日志文件或输入路径，解析后查看帧列表、搜索关键字、分析性能与导出报告。</p>
+      <p>上传完整 apitrace 日志或输入路径，解析后查看每帧 OpenGL 统计、Shader/Program、搜索与导出。</p>
     </div>
 
     <FileUpload
@@ -57,7 +57,9 @@ const {
       </div>
       <div class="stat-card">
         <div class="stat-label">最大帧耗时</div>
-        <div class="stat-value">{{ parseResult.max_frame_time ?? 0 }}<small>ms</small></div>
+        <div class="stat-value">
+          {{ parseResult.has_timing ? (parseResult.max_frame_time ?? 0) : '—' }}<small v-if="parseResult.has_timing">ms</small>
+        </div>
       </div>
     </div>
 
@@ -73,9 +75,6 @@ const {
       </template>
       <template #trace>
         <TraceInspector />
-      </template>
-      <template #diagnose>
-        <DiagnosisPanel :file-path="filePath" />
       </template>
       <template #export>
         <div class="export-section">
@@ -128,6 +127,8 @@ const {
         </div>
       </template>
     </AnalysisTabs>
+
+    <FrameDetailDialog />
 
     <div v-if="!parseResult" class="empty-state" style="margin-top:2rem;">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
