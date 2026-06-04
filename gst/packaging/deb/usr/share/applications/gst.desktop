@@ -1,8 +1,11 @@
 [Desktop Entry]
 Name=GST
-Comment=GPU Support Toolkit - Log Analysis
-Exec=/usr/bin/gst-server --port 8080 --browser --web-dir /usr/share/gst/web
+GenericName=GPU Log Analyzer
+Comment=GPU Support Toolkit log analysis
+Exec=/usr/bin/gst-ui
 Icon=gst
 Terminal=false
 Type=Application
-Categories=Utility;Development;
+Categories=Development;Utility;
+Keywords=GPU;OpenGL;apitrace;trace;log;analysis;
+StartupNotify=true

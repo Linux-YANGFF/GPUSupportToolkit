@@ -13,12 +13,14 @@
 
 ## 验证标准
 
-### error.txt 空指针诊断
-- [x] 格式: rawtrace, 64 帧
-- [x] Critical: `glVertexAttribPointer at line 27766` 空指针无 VBO
-- [x] High: 434 次客户端指针无 VBO（context 0x55b32bc5e0）
-- [x] 资源泄漏: 15 个报告
-- [x] 反模式: <20 条（已降噪）
+### error.txt 诊断
+- [x] 格式: rawtrace, 63 帧
+- [x] 诊断总数: 34 条
+- [x] High: 6 条 Shader 重复编译
+- [x] Medium: 13 条，包括 client-side vertex arrays 和反模式
+- [x] Low: 15 条资源生命周期提示
+- [x] indexed rawtrace 的 CLI JSON 与 HTTP `/api/diagnose` 不再返回 0 findings
+- [x] Critical 空指针由小型单元回归样例覆盖
 
 ### apiTrace.log 性能诊断
 - [x] 格式: rawtrace（不是 profile）, 231 帧

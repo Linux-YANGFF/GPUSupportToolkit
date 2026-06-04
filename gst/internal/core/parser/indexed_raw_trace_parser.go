@@ -223,6 +223,40 @@ func ParseIndexedFrameAPICalls(path string, frame core.FrameInfo, page int, page
 	return items, total, nil
 }
 
+// HydrateIndexedAPICalls loads raw API calls for indexed logs so diagnosis
+// engines can inspect call order without forcing normal UI paths to retain
+// every call in memory.
+func HydrateIndexedAPICalls(log *core.ParsedLog) error {
+	if log == nil || !log.Indexed {
+		return nil
+	}
+	if log.SourcePath == "" {
+		return errors.New("indexed log source path is empty")
+	}
+	for i := range log.Frames {
+		pageSize := log.Frames[i].APICallCount
+		if pageSize <= 0 {
+			pageSize = log.Frames[i].EndLine - log.Frames[i].StartLine + 1
+		}
+		if pageSize <= 0 {
+			pageSize = 1
+		}
+		calls, total, err := ParseIndexedFrameAPICalls(log.SourcePath, log.Frames[i], 1, pageSize)
+		if err != nil {
+			return err
+		}
+		if total > len(calls) {
+			calls, total, err = ParseIndexedFrameAPICalls(log.SourcePath, log.Frames[i], 1, total)
+			if err != nil {
+				return err
+			}
+		}
+		log.Frames[i].APICalls = calls
+		log.Frames[i].APICallCount = total
+	}
+	return nil
+}
+
 func ParseIndexedFrameRawLines(path string, frame core.FrameInfo, page int, pageSize int, stripLineNumber bool) ([]string, int, error) {
 	if page <= 0 {
 		page = 1

@@ -2,8 +2,11 @@
 import { ref, computed } from 'vue'
 
 interface Finding {
+  id?: string
   severity: string
+  severity_rank?: number
   category?: string
+  category_label?: string
   kind?: string
   confidence?: string
   count?: number
@@ -24,6 +27,7 @@ interface DiagnosisSummary {
 }
 
 interface DiagnosisReport {
+  schema_version?: string
   source_file: string
   generated_at: string
   summary: DiagnosisSummary
@@ -91,13 +95,13 @@ const advisoryFindingCount = computed(() => {
 })
 
 function rankedFindings(findings: Finding[]): Finding[] {
-    const ranked: Finding[] = []
-    for (const sev of severityOrder) {
-      for (const f of findings) {
-        if (f.severity === sev) ranked.push(f)
-      }
+  const ranked: Finding[] = []
+  for (const sev of severityOrder) {
+    for (const f of findings) {
+      if (f.severity === sev) ranked.push(f)
     }
-    return ranked
+  }
+  return ranked
 }
 
 const markdownReport = computed(() => {
@@ -135,7 +139,7 @@ const markdownReport = computed(() => {
     md += `## ${sec.label}\n\n`
     list.forEach((f, i) => {
       md += `### ${i + 1}. ${f.description}\n\n`
-      if (f.category) md += `- **类别**: ${f.category}\n`
+      if (f.category || f.category_label) md += `- **类别**: ${f.category_label || f.category}\n`
       if (f.kind) md += `- **类型**: ${f.kind}\n`
       if (f.confidence) md += `- **置信度**: ${f.confidence}\n`
       if (f.count) md += `- **数量**: ${f.count}\n`
@@ -175,6 +179,8 @@ const progressSteps = [
   '执行性能异常定位分析...',
   '执行线程安全诊断分析...',
   '执行驱动层错误关联分析...',
+  '执行小批量 DrawCall 检测分析...',
+  '执行过量 glGetError 检测分析...',
   '生成诊断报告...',
 ]
 
@@ -368,7 +374,7 @@ function exportMarkdown() {
               :style="{ background: severityBgs[finding.severity], color: severityColors[finding.severity], borderColor: severityColors[finding.severity] }"
             >{{ severityLabels[finding.severity] || finding.severity }}</span>
             <span class="finding-desc">{{ finding.description }}</span>
-            <span v-if="finding.category" class="finding-category">{{ finding.category }}</span>
+            <span v-if="finding.category || finding.category_label" class="finding-category">{{ finding.category_label || finding.category }}</span>
             <span v-if="finding.count" class="finding-count">{{ finding.count }}x</span>
             <svg class="expand-icon" :class="{ rotated: activeFinding === idx }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
               <polyline points="6 9 12 15 18 9"/>

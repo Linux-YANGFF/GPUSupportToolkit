@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+
+WEB_DIR="${GST_WEB_DIR:-/usr/share/gst/web}"
+PORT="${GST_PORT:-0}"
+STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}"
+LOG_DIR="$STATE_HOME/gst"
+LOG_FILE="$LOG_DIR/gst-ui.log"
+
+mkdir -p "$LOG_DIR"
+
+exec /usr/bin/gst-server --port "$PORT" --browser --web-dir "$WEB_DIR" "$@" >>"$LOG_FILE" 2>&1

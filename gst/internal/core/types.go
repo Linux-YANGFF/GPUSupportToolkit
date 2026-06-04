@@ -145,9 +145,14 @@ const (
 	FindingKindInfo          FindingKind = "info"
 )
 
+const DiagnosisSchemaVersion = "diagnosis.v1"
+
 type Finding struct {
+	ID             string            `json:"id,omitempty"`
 	Severity       Severity          `json:"severity"`
+	SeverityRank   int               `json:"severity_rank,omitempty"`
 	Category       string            `json:"category,omitempty"`
+	CategoryLabel  string            `json:"category_label,omitempty"`
 	Kind           FindingKind       `json:"kind,omitempty"`
 	Confidence     FindingConfidence `json:"confidence,omitempty"`
 	Count          int               `json:"count,omitempty"`
@@ -168,10 +173,11 @@ type DiagnosisSummary struct {
 }
 
 type DiagnosisReport struct {
-	SourceFile  string           `json:"source_file"`
-	GeneratedAt string           `json:"generated_at"`
-	Summary     DiagnosisSummary `json:"summary"`
-	Findings    []Finding        `json:"findings"`
+	SchemaVersion string           `json:"schema_version"`
+	SourceFile    string           `json:"source_file"`
+	GeneratedAt   string           `json:"generated_at"`
+	Summary       DiagnosisSummary `json:"summary"`
+	Findings      []Finding        `json:"findings"`
 }
 
 // Overview types

@@ -117,54 +117,8 @@ func (oa *OverviewAnalyzer) buildPerformance() core.OverviewPerformance {
 }
 
 func (oa *OverviewAnalyzer) buildDiagnosis() core.OverviewDiagnosis {
-	registry := bug.NewDefaultRegistry()
-	findings := registry.RunAll(oa.log)
-	sort.SliceStable(findings, func(i, j int) bool {
-		return overviewFindingRank(findings[i]) < overviewFindingRank(findings[j])
-	})
-
-	var critical, high, medium, low int
-	topIssues := make([]string, 0, 5)
-
-	for _, f := range findings {
-		switch f.Severity {
-		case core.SeverityCritical:
-			critical++
-		case core.SeverityHigh:
-			high++
-		case core.SeverityMedium:
-			medium++
-		case core.SeverityLow:
-			low++
-		}
-
-		if len(topIssues) < 5 && f.Severity != core.SeverityLow && f.Severity != core.SeverityInfo {
-			topIssues = append(topIssues, fmt.Sprintf("%s: %s", f.Category, f.Description))
-		}
-	}
-
 	return core.OverviewDiagnosis{
-		TotalFindings: len(findings),
-		Critical:      critical,
-		High:          high,
-		Medium:        medium,
-		Low:           low,
-		TopIssues:     topIssues,
-	}
-}
-
-func overviewFindingRank(f core.Finding) int {
-	switch f.Severity {
-	case core.SeverityCritical:
-		return 0
-	case core.SeverityHigh:
-		return 1
-	case core.SeverityMedium:
-		return 2
-	case core.SeverityLow:
-		return 3
-	default:
-		return 4
+		TopIssues: []string{},
 	}
 }
 
@@ -288,7 +242,7 @@ func (oa *OverviewAnalyzer) buildSummary(basic core.OverviewBasic, perf core.Ove
 			parts = append(parts, "发现"+strings.Join(issues, "和"))
 		}
 	} else {
-		parts = append(parts, "未发现明显问题")
+		parts = append(parts, "基础分析完成")
 	}
 
 	return strings.Join(parts, ", ")

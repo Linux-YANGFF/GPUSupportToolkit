@@ -18,6 +18,9 @@ func TestGenerateReport_EmptyFindings(t *testing.T) {
 	if report.GeneratedAt == "" {
 		t.Error("expected non-empty GeneratedAt")
 	}
+	if report.SchemaVersion != core.DiagnosisSchemaVersion {
+		t.Errorf("expected schema version %s, got %s", core.DiagnosisSchemaVersion, report.SchemaVersion)
+	}
 	if report.Summary.TotalFindings != 0 {
 		t.Errorf("expected 0 total findings, got %d", report.Summary.TotalFindings)
 	}
@@ -74,6 +77,54 @@ func TestGenerateReport_SingleCriticalFinding(t *testing.T) {
 	}
 	if report.Findings[0].Severity != core.SeverityCritical {
 		t.Errorf("expected critical severity, got %s", report.Findings[0].Severity)
+	}
+	if report.Findings[0].SeverityRank != 1 {
+		t.Errorf("expected severity rank 1, got %d", report.Findings[0].SeverityRank)
+	}
+	if report.Findings[0].CategoryLabel != "Driver Error" {
+		t.Errorf("expected category label Driver Error, got %s", report.Findings[0].CategoryLabel)
+	}
+	if report.Findings[0].Confidence != core.ConfidenceMedium {
+		t.Errorf("expected default confidence medium, got %s", report.Findings[0].Confidence)
+	}
+	if report.Findings[0].ID == "" {
+		t.Error("expected stable finding id")
+	}
+}
+
+func TestGenerateReport_NormalizesFindingContract(t *testing.T) {
+	report := GenerateReport("test.log", []core.Finding{
+		{
+			Severity:    "unexpected",
+			Category:    "perf-anomaly",
+			Description: "missing fields",
+		},
+	})
+
+	if len(report.Findings) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(report.Findings))
+	}
+	f := report.Findings[0]
+	if f.Severity != core.SeverityInfo {
+		t.Errorf("expected unknown severity to normalize to info, got %s", f.Severity)
+	}
+	if f.SeverityRank != 5 {
+		t.Errorf("expected info rank 5, got %d", f.SeverityRank)
+	}
+	if f.Category != "perf_anomaly" {
+		t.Errorf("expected normalized category perf_anomaly, got %s", f.Category)
+	}
+	if f.CategoryLabel != "Performance" {
+		t.Errorf("expected Performance label, got %s", f.CategoryLabel)
+	}
+	if f.Kind != core.FindingKindPerformance {
+		t.Errorf("expected performance kind, got %s", f.Kind)
+	}
+	if f.Confidence != core.ConfidenceMedium {
+		t.Errorf("expected default confidence medium, got %s", f.Confidence)
+	}
+	if f.RootCauseChain == nil {
+		t.Error("expected non-nil root cause chain")
 	}
 }
 
@@ -278,12 +329,35 @@ func TestGenerateMarkdownReport_SeverityGrouping(t *testing.T) {
 	}
 }
 
-func TestNewDefaultRegistry_RegistersAllSeven(t *testing.T) {
+func TestNewDefaultRegistry_RegistersAllDiagnosers(t *testing.T) {
 	r := NewDefaultRegistry()
 
 	if len(r.diagnosers) != 9 {
 		t.Errorf("expected 9 diagnosers, got %d", len(r.diagnosers))
 	}
+}
+
+func TestNewDefaultRegistry_IncludesNullPointerDetector(t *testing.T) {
+	r := NewDefaultRegistry()
+	log := &core.ParsedLog{
+		Frames: []core.FrameInfo{
+			{
+				FrameNum: 1,
+				APICalls: []core.APILogEntry{
+					{APIName: "glBindBuffer", RawParams: "0x8892 0", GCAddr: "0x1", LineNum: 10},
+					{APIName: "glVertexAttribPointer", RawParams: "0 3 0x1406 0 0 (nil)", GCAddr: "0x1", LineNum: 11, HasNilPtr: true},
+				},
+			},
+		},
+	}
+
+	findings := r.RunAll(log)
+	for _, finding := range findings {
+		if finding.Category == "null_pointer" && finding.Severity == core.SeverityCritical {
+			return
+		}
+	}
+	t.Fatalf("expected critical null_pointer finding, got %#v", findings)
 }
 
 func TestGenerateFullReport_Integration(t *testing.T) {

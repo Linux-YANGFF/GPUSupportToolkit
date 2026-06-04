@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -18,6 +19,7 @@ import (
 )
 
 var (
+	host        = flag.String("host", "127.0.0.1", "Server host/interface")
 	port        = flag.String("port", "8080", "Server port")
 	openBrowser = flag.Bool("browser", true, "Open browser on startup")
 	webDir      = flag.String("web-dir", "web", "Directory containing web files")
@@ -46,7 +48,7 @@ func main() {
 
 	platform.InitLogger(*logLevel)
 
-	addr := fmt.Sprintf(":%s", *port)
+	addr := net.JoinHostPort(*host, *port)
 	slog.Info("GST Server starting", "addr", addr)
 	slog.Info("Serving web files", "dir", *webDir)
 
@@ -103,17 +105,6 @@ func main() {
 	// Static files
 	mux.HandleFunc("/", serveStatic)
 
-	// Open browser if requested
-	if *openBrowser {
-		go func() {
-			url := fmt.Sprintf("http://localhost:%s", *port)
-			slog.Info("Opening browser", "url", url)
-			if err := exec.Command("xdg-open", url).Start(); err != nil {
-				slog.Warn("Failed to open browser", "error", err)
-			}
-		}()
-	}
-
 	// Write PID file if requested
 	if *pidFile != "" {
 		absPath, err := filepath.Abs(*pidFile)
@@ -134,8 +125,34 @@ func main() {
 
 	// Start server
 	srv = &http.Server{Addr: addr, Handler: mux}
-	slog.Info("Server ready", "url", fmt.Sprintf("http://localhost:%s", *port))
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		slog.Error("Server failed to listen", "addr", addr, "error", err)
+		os.Exit(1)
+	}
+
+	actualPort := *port
+	if tcpAddr, ok := listener.Addr().(*net.TCPAddr); ok {
+		actualPort = fmt.Sprintf("%d", tcpAddr.Port)
+	}
+	browserHost := *host
+	if browserHost == "" || browserHost == "0.0.0.0" || browserHost == "::" {
+		browserHost = "localhost"
+	}
+	serverURL := fmt.Sprintf("http://%s", net.JoinHostPort(browserHost, actualPort))
+
+	// Open browser after the listener is ready, so port 0 resolves correctly.
+	if *openBrowser {
+		go func() {
+			slog.Info("Opening browser", "url", serverURL)
+			if err := exec.Command("xdg-open", serverURL).Start(); err != nil {
+				slog.Warn("Failed to open browser", "error", err)
+			}
+		}()
+	}
+
+	slog.Info("Server ready", "url", serverURL)
+	if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
 		slog.Error("Server failed", "error", err)
 		os.Exit(1)
 	}
@@ -145,6 +162,14 @@ func main() {
 func handleShutdown(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !isLocalRequest(r) {
+		http.Error(w, "Shutdown is only allowed from localhost", http.StatusForbidden)
+		return
+	}
+	if token := os.Getenv("GST_SHUTDOWN_TOKEN"); token != "" && shutdownToken(r) != token {
+		http.Error(w, "Invalid shutdown token", http.StatusForbidden)
 		return
 	}
 
@@ -163,6 +188,26 @@ func handleShutdown(w http.ResponseWriter, r *http.Request) {
 			os.Remove(*pidFile)
 		}
 	}()
+}
+
+func isLocalRequest(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func shutdownToken(r *http.Request) string {
+	if token := r.Header.Get("X-GST-Shutdown-Token"); token != "" {
+		return token
+	}
+	auth := r.Header.Get("Authorization")
+	if strings.HasPrefix(auth, "Bearer ") {
+		return strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
+	}
+	return r.URL.Query().Get("token")
 }
 
 // serveStatic serves static files with correct MIME types
@@ -184,7 +229,7 @@ func serveStatic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	absWebDir, _ := filepath.Abs(*webDir)
-	if !strings.HasPrefix(absPath, absWebDir) {
+	if !pathWithinWebDir(absPath, absWebDir) {
 		http.Error(w, "Access denied", 403)
 		return
 	}
@@ -210,4 +255,12 @@ func serveStatic(w http.ResponseWriter, r *http.Request) {
 
 	// Serve the file
 	http.ServeFile(w, r, filePath)
+}
+
+func pathWithinWebDir(absPath, absWebDir string) bool {
+	rel, err := filepath.Rel(absWebDir, absPath)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel))
 }

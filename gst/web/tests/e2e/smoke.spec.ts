@@ -6,6 +6,7 @@ test('GST log analysis page renders', async ({ page }) => {
   await expect(page).toHaveTitle(/日志分析 - GST GPU Support Toolkit/)
   await expect(page.getByRole('heading', { name: '日志分析' })).toBeVisible()
   await expect(page.getByPlaceholder('输入日志文件路径...')).toBeVisible()
+  await expect(page.getByRole('button', { name: '诊断' })).toHaveCount(0)
 })
 
 test('frame detail shows raw log text and downloads frame log', async ({ page }) => {

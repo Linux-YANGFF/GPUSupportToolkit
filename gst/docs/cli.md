@@ -34,9 +34,16 @@ gst-cli [options] -parse <file>
 | `-top <N>` | Show top N slowest frames (default: 10) |
 | `-funcs` | Show function call statistics |
 | `-shader` | Show shader compilation statistics |
-| `-diagnose` | Run bug diagnosis engine (7 analyzers) on log file |
+| `-diagnose` | Run bug diagnosis engine (9 analyzers) on log file and output Markdown |
+| `-diagnose-json` | Run bug diagnosis engine and output JSON |
 | `-ai-summary` | Output AI-friendly OpenGL case summary JSON |
 | `-frame-stats <N>` | Output one frame's OpenGL category/API statistics as JSON |
+| `-overview` | Output comprehensive overview as JSON |
+| `-drawcalls` | Output draw call analysis as JSON |
+| `-textures` | Output texture lifecycle analysis as JSON |
+| `-trace-programs` | Output program/shader registry as JSON |
+| `-frame-raw <N>` | Output raw log lines for one frame as JSON |
+| `-frame-distribution` | Output frame time distribution with clustering as JSON |
 | `-export <format>` | Export results (txt, csv, or json) |
 | `-output <file>` | Output file path (default: stdout) |
 | `-verbose` | Enable verbose logging |
@@ -128,7 +135,7 @@ Run the bug diagnosis engine to detect common GPU programming issues:
 gst-cli -diagnose -parse /path/to/log.trace
 ```
 
-The diagnosis engine runs 7 analyzers:
+The diagnosis engine runs 9 analyzers:
 
 | Analyzer | Description |
 |:----|:------------|
@@ -139,6 +146,8 @@ The diagnosis engine runs 7 analyzers:
 | Performance Anomaly Detector | Detects frame time spikes (>2σ deviation) and API call anomalies |
 | Thread Safety Detector | Detects multiple threads operating on same GL context |
 | Driver Error Detector | Correlates `__glSetError` codes with triggering API calls |
+| Unbatched Draw Call Detector | Detects excessive small draw calls and batching opportunities |
+| Excessive glGetError Detector | Detects high-frequency `glGetError` calls in hot paths |
 
 Output is a structured Markdown report including:
 - Summary of issues by severity (Critical/High/Medium/Low/Info)
@@ -149,6 +158,9 @@ Combine with other flags for comprehensive analysis:
 ```bash
 # Diagnose with verbose logging
 gst-cli -diagnose -verbose -parse /path/to/log.trace
+
+# Diagnose with JSON output
+gst-cli -diagnose-json -parse /path/to/log.trace
 ```
 
 ### AI Summary JSON
@@ -161,6 +173,14 @@ gst-cli -ai-summary -parse /path/to/log.trace
 
 # Frame-level OpenGL category and key API statistics
 gst-cli -frame-stats 423 -parse /path/to/log.trace
+
+# Broader machine-readable analysis endpoints exposed through the CLI
+gst-cli -overview -parse /path/to/log.trace
+gst-cli -drawcalls -parse /path/to/log.trace
+gst-cli -textures -parse /path/to/log.trace
+gst-cli -trace-programs -parse /path/to/log.trace
+gst-cli -frame-raw 423 -parse /path/to/log.trace
+gst-cli -frame-distribution -parse /path/to/log.trace
 ```
 
 The frame stats payload includes:

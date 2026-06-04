@@ -30,11 +30,16 @@ make build-all
 # Specify port
 ./bin/gst-server -port 8080
 
+# Bind all network interfaces for remote access
+./bin/gst-server -host 0.0.0.0 -port 8080
+
 # Disable auto-open browser
 ./bin/gst-server -browser=false
 ```
 
 Then open http://localhost:8080 in your browser.
+
+By default the server binds to `127.0.0.1` and only parses local file paths under the current directory. Set `GST_LOG_DIR=/path/to/logs` to allow another log directory.
 
 ### Use gst-cli
 
@@ -48,7 +53,7 @@ Then open http://localhost:8080 in your browser.
 # Search for keywords
 ./bin/gst-cli -search glDrawElements -parse /path/to/log.trace
 
-# Run bug diagnosis (7 analyzers)
+# Run bug diagnosis (9 analyzers)
 ./bin/gst-cli -diagnose -parse /path/to/log.trace
 ```
 
@@ -63,7 +68,7 @@ Then open http://localhost:8080 in your browser.
 | Function Stats | Call count and total time per function |
 | Shader Stats | Shader compilation statistics |
 | Multi-format Export | TXT/CSV/JSON export |
-| **Bug Diagnosis** | 7 analyzers: null pointer, resource leak, shader error, API anti-pattern, perf anomaly, thread safety, driver error |
+| **Bug Diagnosis** | 9 analyzers: null pointer, resource leak, shader error, API anti-pattern, perf anomaly, thread safety, driver error, unbatched draw call, excessive glGetError |
 | Structured Logging | Go 1.22+ `log/slog` with configurable levels |
 | AI JSON API | v2 HTTP endpoints and CLI JSON summaries for downstream AI tools |
 | Release Packages | Cross-architecture deb/rpm targets for Linux amd64 and arm64 |
@@ -98,7 +103,7 @@ gst/
 │   │   ├── analyzer/  # Frame, function, shader analysis
 │   │   ├── search/    # Keyword and time range search
 │   │   ├── exporter/  # JSON/CSV/TXT export
-│   │   └── bug/       # Bug diagnosis engine (7 analyzers + state machine)
+│   │   └── bug/       # Bug diagnosis engine (9 analyzers + state machine)
 │   └── platform/      # File I/O, OS detection, slog logger
 ├── web/               # Web UI files
 └── packaging/         # Package configurations

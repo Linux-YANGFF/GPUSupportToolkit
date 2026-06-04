@@ -1,0 +1,29 @@
+#!/bin/sh
+set -eu
+
+SOURCE="/usr/share/applications/gst.desktop"
+
+if [ ! -f "$SOURCE" ]; then
+    echo "GST desktop entry not found: $SOURCE" >&2
+    exit 1
+fi
+
+desktop_dir=""
+if [ -r "$HOME/.config/user-dirs.dirs" ]; then
+    desktop_dir=$(sed -n 's/^XDG_DESKTOP_DIR="\([^"]*\)"/\1/p' "$HOME/.config/user-dirs.dirs" | sed "s|\$HOME|$HOME|")
+fi
+
+if [ -z "$desktop_dir" ]; then
+    desktop_dir="$HOME/Desktop"
+fi
+
+mkdir -p "$desktop_dir"
+target="$desktop_dir/gst.desktop"
+cp "$SOURCE" "$target"
+chmod 755 "$target"
+
+if command -v gio >/dev/null 2>&1; then
+    gio set "$target" metadata::trusted true >/dev/null 2>&1 || true
+fi
+
+echo "GST desktop shortcut created: $target"

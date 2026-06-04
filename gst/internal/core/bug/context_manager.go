@@ -9,9 +9,9 @@ import (
 )
 
 var (
-	shareListRe     = regexp.MustCompile(`share_list\s*=\s*(\S+)`)
-	decimalNumRe    = regexp.MustCompile(`\b([1-9]\d*)\b`)
-	hexOrConstRe    = regexp.MustCompile(`^0x[0-9a-fA-F]+$`)
+	shareListRe  = regexp.MustCompile(`share_list\s*=\s*(\S+)`)
+	decimalNumRe = regexp.MustCompile(`\b([1-9]\d*)\b`)
+	hexOrConstRe = regexp.MustCompile(`^0x[0-9a-fA-F]+$`)
 )
 
 type ContextInfo struct {

@@ -137,15 +137,15 @@ func (d *PerfAnomalyDetector) detectFrameTimeSpikes(frames []core.FrameInfo) []c
 }
 
 var drawCallAPIs = map[string]bool{
-	"glDrawArrays":             true,
-	"glDrawElements":           true,
-	"glDrawRangeElements":      true,
-	"glDrawArraysIndirect":     true,
-	"glDrawElementsIndirect":   true,
-	"glMultiDrawArrays":        true,
-	"glMultiDrawElements":      true,
-	"glDrawElementsInstanced":  true,
-	"glDrawArraysInstanced":    true,
+	"glDrawArrays":            true,
+	"glDrawElements":          true,
+	"glDrawRangeElements":     true,
+	"glDrawArraysIndirect":    true,
+	"glDrawElementsIndirect":  true,
+	"glMultiDrawArrays":       true,
+	"glMultiDrawElements":     true,
+	"glDrawElementsInstanced": true,
+	"glDrawArraysInstanced":   true,
 }
 
 func countDrawCalls(frame *core.FrameInfo) int {

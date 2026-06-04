@@ -6,6 +6,8 @@ The HTTP API is served by `gst-server`. Start it with:
 ./bin/gst-server -port 8080 -browser=false -web-dir web/dist
 ```
 
+The server binds to `127.0.0.1` by default. Use `-host 0.0.0.0` only when remote access is required. Local path parsing is restricted to the current directory unless `GST_LOG_DIR` is set.
+
 All JSON endpoints return `application/json` unless noted.
 
 ## Health
@@ -53,9 +55,19 @@ Multipart upload uses form field `file` and optional `filename`.
 | `GET` | `/api/log/analyze/drawcalls` | Draw call analysis |
 | `GET` | `/api/log/analyze/textures` | Texture analysis |
 | `GET` | `/api/log/analyze/bottleneck` | Bottleneck summary |
-| `GET` | `/api/log/analyze/workflow` | Legacy workflow analysis |
+| `POST` | `/api/log/analyze/workflow` | Legacy workflow analysis |
 | `GET` | `/api/overview` | Overall current-case overview |
-| `GET` | `/api/diagnose` | Legacy bug diagnosis report |
+| `POST` | `/api/diagnose` | Legacy bug diagnosis report |
+
+Workflow request:
+
+```json
+{"workflow":"performance"}
+```
+
+`workflow` accepts `performance`, `crash`, `rendering`, or `memory`.
+
+Diagnosis uses the current parsed log and does not require a request body.
 
 ## Trace Inspector
 
@@ -68,7 +80,15 @@ Multipart upload uses form field `file` and optional `filename`.
 
 | Method | Path | Description |
 |:---|:---|:---|
-| `GET` | `/api/log/export?format=json` | Export current parsed result as `json`, `csv`, or `txt` |
+| `POST` | `/api/log/export` | Export current parsed result as `json`, `csv`, or `txt` |
+
+Export request:
+
+```json
+{"format":"json","type":"frames","query":""}
+```
+
+`format` accepts `json`, `csv`, or `txt`. `type` accepts `frames`, `funcs`, `shader`, `search`, `top`, or `longest`.
 
 ## v2 AI API
 
