@@ -3,19 +3,19 @@ package parser
 import (
 	"bufio"
 	"fmt"
+	"gst/internal/core"
 	"io"
 	"regexp"
 	"strings"
-	"gst/internal/core"
 )
 
 // LogKind 日志类型
 type LogKind string
 
 const (
-	KindAPITrace LogKind = "apitrace"  // 聚合统计格式: glXxx: count=X, time=Y us
-	KindProfile  LogKind = "profile"   // Profile格式 (同APITrace)
-	KindRawTrace LogKind = "rawtrace"  // 原始apiTrace格式: 每行一个API调用
+	KindAPITrace LogKind = "apitrace" // 聚合统计格式: glXxx: count=X, time=Y us
+	KindProfile  LogKind = "profile"  // Profile格式 (同APITrace)
+	KindRawTrace LogKind = "rawtrace" // 原始apiTrace格式: 每行一个API调用
 	KindUnknown  LogKind = "unknown"
 )
 

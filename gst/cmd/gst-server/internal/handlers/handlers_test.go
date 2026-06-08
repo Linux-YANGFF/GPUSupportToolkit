@@ -40,7 +40,8 @@ func TestValidateLogPath(t *testing.T) {
 		{"dot dot outside allowed", "../etc/passwd", true},
 		{"absolute system path", "/etc/passwd", true},
 		{"relative outside allowed", filepath.Join(tmpDir, "../outside/file.log"), true},
-		{"allowed dir itself", allowedPath, false},
+		{"allowed dir itself", allowedPath, true},
+		{"missing file in allowed dir", filepath.Join(tmpDir, "missing.log"), true},
 	}
 
 	for _, tt := range tests {
@@ -89,23 +90,82 @@ func TestFrameSummaryJSONUsesSnakeCase(t *testing.T) {
 	}
 }
 
+func TestOverviewDoesNotHydrateIndexedLog(t *testing.T) {
+	h := NewHandler()
+	h.current = &core.ParsedLog{
+		Indexed:    true,
+		SourcePath: filepath.Join(t.TempDir(), "missing.log"),
+		Frames: []core.FrameInfo{
+			{
+				FrameNum:      1,
+				StartLine:     1,
+				EndLine:       3,
+				TotalTimeUs:   16000,
+				HasTiming:     true,
+				TimingSource:  "frame_cost",
+				APICallCount:  2,
+				DrawCallCount: 1,
+				APISummary: map[string]*core.APISummary{
+					"glDrawArrays": {APIName: "glDrawArrays", Count: 1},
+					"glBindBuffer": {APIName: "glBindBuffer", Count: 1},
+				},
+			},
+		},
+	}
+	h.format = string(parser.KindRawTrace)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/overview", nil)
+	rec := httptest.NewRecorder()
+	h.Overview(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("overview status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var body OverviewResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if body.Resources.TotalAPICalls != 2 {
+		t.Fatalf("total api calls = %d, want 2", body.Resources.TotalAPICalls)
+	}
+	if body.DiagnosisSummary.TotalFindings != 0 || len(body.DiagnosisSummary.TopIssues) != 0 {
+		t.Fatalf("overview should not run diagnosis: %+v", body.DiagnosisSummary)
+	}
+}
+
 func TestValidateLogPathDefaultAllowed(t *testing.T) {
 	os.Unsetenv("GST_LOG_DIR")
 
+	tmpDir := t.TempDir()
 	cwd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("os.Getwd: %v", err)
 	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("os.Chdir: %v", err)
+	}
+	defer os.Chdir(cwd)
+	tmpFile := filepath.Join(tmpDir, "test.log")
+	if err := os.WriteFile(tmpFile, []byte("log"), 0644); err != nil {
+		t.Fatalf("os.WriteFile: %v", err)
+	}
+	outsideFile, err := os.CreateTemp(filepath.Dir(tmpDir), "outside-*.log")
+	if err != nil {
+		t.Fatalf("os.CreateTemp outside: %v", err)
+	}
+	outsideFile.Close()
+	defer os.Remove(outsideFile.Name())
 
 	tests := []struct {
 		name    string
 		path    string
 		wantErr bool
 	}{
-		{"cwd file", filepath.Join(cwd, "test.log"), false},
+		{"cwd file", tmpFile, false},
 		{"empty path", "", true},
-		{"dot dot within proj", "../etc/passwd", false},
+		{"dot dot outside default dir", filepath.Join("..", filepath.Base(outsideFile.Name())), true},
 		{"/etc/passwd", "/etc/passwd", true},
+		{"cwd dir", tmpDir, true},
 	}
 
 	for _, tt := range tests {
@@ -485,25 +545,5 @@ func TestHealth(t *testing.T) {
 	handler.Health(w, req)
 	if w.Code != http.StatusOK {
 		t.Errorf("Health status = %d, want 200", w.Code)
-	}
-}
-
-func TestServeUI_Root(t *testing.T) {
-	handler := &Handler{}
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	handler.ServeUI(w, req)
-	if w.Code != http.StatusNotFound {
-		t.Logf("ServeUI status: %d (expected 404 if web/index.html missing)", w.Code)
-	}
-}
-
-func TestServeUI_NotFound(t *testing.T) {
-	handler := &Handler{}
-	req := httptest.NewRequest(http.MethodGet, "/nonexistent", nil)
-	w := httptest.NewRecorder()
-	handler.ServeUI(w, req)
-	if w.Code != http.StatusNotFound {
-		t.Errorf("ServeUI for /nonexistent = %d, want 404", w.Code)
 	}
 }

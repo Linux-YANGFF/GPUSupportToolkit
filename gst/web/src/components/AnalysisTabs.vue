@@ -25,10 +25,6 @@ const { activeTab, tabs, switchTab } = ctx
         <svg v-else-if="tab.id === 'analyze'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>
         </svg>
-        <svg v-else-if="tab.id === 'diagnose'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/>
-          <line x1="12" y1="16" x2="12.01" y2="16"/>
-        </svg>
         <svg v-else-if="tab.id === 'trace'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M4 5h16"/><path d="M4 12h16"/><path d="M4 19h16"/>
           <circle cx="8" cy="5" r="2"/><circle cx="14" cy="12" r="2"/><circle cx="10" cy="19" r="2"/>
@@ -53,9 +49,6 @@ const { activeTab, tabs, switchTab } = ctx
       </div>
       <div v-show="activeTab === 'trace'" class="tab-panel">
         <slot name="trace" />
-      </div>
-      <div v-show="activeTab === 'diagnose'" class="tab-panel">
-        <slot name="diagnose" />
       </div>
       <div v-show="activeTab === 'export'" class="tab-panel">
         <slot name="export" />

@@ -1,6 +1,7 @@
 package glstats
 
 import (
+	"fmt"
 	"sort"
 
 	"gst/internal/core"
@@ -45,6 +46,22 @@ type FrameStats struct {
 	CategoryStats    []CategoryCounter `json:"category_stats"`
 	KeyAPIs          []APICounter      `json:"key_apis"`
 	TopAPIs          []APICounter      `json:"top_apis"`
+	GapUs            int64             `json:"gap_us"`
+	GapNote          string            `json:"gap_note,omitempty"`
+	Gap              *GapInfo          `json:"gap_detail,omitempty"`
+	PerfSignals      []PerfSignal      `json:"perf_signals,omitempty"`
+}
+
+type GapInfo struct {
+	Us             int64  `json:"us"`
+	Pct            int    `json:"pct"`
+	Classification string `json:"classification"`
+}
+
+type PerfSignal struct {
+	Signal   string `json:"signal"`
+	Severity string `json:"severity"`
+	Detail   string `json:"detail"`
 }
 
 type CaseStats struct {
@@ -58,6 +75,14 @@ type CaseStats struct {
 	TopFramesByDraw []FrameStats      `json:"top_frames_by_draw"`
 	TopFramesByTime []FrameStats      `json:"top_frames_by_time"`
 	AIContract      AIContract        `json:"ai_contract"`
+	Bottleneck      *CaseBottleneck   `json:"bottleneck,omitempty"`
+}
+
+type CaseBottleneck struct {
+	Type       string `json:"type"`
+	Confidence string `json:"confidence"`
+	Evidence   string `json:"evidence"`
+	SceneHint  string `json:"scene_hint,omitempty"`
 }
 
 type AIContract struct {
@@ -77,6 +102,34 @@ func AnalyzeFrame(frame core.FrameInfo) FrameStats {
 		drawCount = frame.DrawCallCount
 	}
 
+	gapUs := frame.TotalTimeUs - frame.APITotalTimeUs - frame.SwapBufferTimeUs
+	if gapUs < 0 {
+		gapUs = 0
+	}
+	var gapNote string
+	gapPct := 0
+	if frame.TotalTimeUs > 0 {
+		gapPct = int(float64(gapUs) / float64(frame.TotalTimeUs) * 100)
+	}
+	if frame.TotalTimeUs > 0 && gapUs > frame.TotalTimeUs/2 {
+		gapNote = "帧内存在大量未计入 API 时间的等待（可能为 CPU 端阻塞、网络 I/O、同步等待等）。建议使用 -frame-raw 查看原始日志。"
+	}
+
+	gapClassification := "normal"
+	if gapPct > 70 {
+		gapClassification = "cpu_blocked"
+	} else if gapPct > 40 {
+		gapClassification = "moderate_gap"
+	}
+
+	gapDetail := &GapInfo{
+		Us:             gapUs,
+		Pct:            gapPct,
+		Classification: gapClassification,
+	}
+
+	perfSignals := detectPerfSignals(frame, apiCounters, drawCount)
+
 	return FrameStats{
 		FrameNum:         frame.FrameNum,
 		StartLine:        frame.StartLine,
@@ -93,6 +146,10 @@ func AnalyzeFrame(frame core.FrameInfo) FrameStats {
 		CategoryStats:    categoryStats,
 		KeyAPIs:          keyAPIs,
 		TopAPIs:          topAPIs,
+		GapUs:            gapUs,
+		GapNote:          gapNote,
+		Gap:              gapDetail,
+		PerfSignals:      perfSignals,
 	}
 }
 
@@ -161,7 +218,199 @@ func AnalyzeCase(log *core.ParsedLog, topN int) CaseStats {
 				"AI consumers should request paginated frame APIs or drawcalls for evidence instead of loading the whole log.",
 			},
 		},
+		Bottleneck: computeCaseBottleneck(log, frames),
 	}
+}
+
+func computeCaseBottleneck(log *core.ParsedLog, frames []FrameStats) *CaseBottleneck {
+	if len(frames) == 0 {
+		return &CaseBottleneck{Type: "unknown", Confidence: "low", Evidence: "no frames"}
+	}
+
+	hasTiming := false
+	for _, f := range frames {
+		if f.HasTiming {
+			hasTiming = true
+			break
+		}
+	}
+	if !hasTiming {
+		return &CaseBottleneck{Type: "unknown", Confidence: "low", Evidence: "no timing data"}
+	}
+
+	var totalAPI, totalSwap, totalGap int64
+	for _, f := range frames {
+		totalAPI += f.APITotalTimeUs
+		totalSwap += f.SwapBufferTimeUs
+		totalGap += f.GapUs
+	}
+	totalTime := totalAPI + totalSwap + totalGap
+	if totalTime == 0 {
+		return &CaseBottleneck{Type: "unknown", Confidence: "low", Evidence: "zero total time"}
+	}
+
+	apiPct := float64(totalAPI) / float64(totalTime) * 100
+	gapPct := float64(totalGap) / float64(totalTime) * 100
+
+	sceneHint := "unknown"
+	var drawArraysCount, drawElementsCount int
+	for _, f := range frames {
+		for _, cat := range f.CategoryStats {
+			for _, api := range cat.TopAPIs {
+				switch api.APIName {
+				case "glDrawArrays":
+					drawArraysCount += api.Count
+				case "glDrawElements":
+					drawElementsCount += api.Count
+				}
+			}
+		}
+	}
+	totalDraw := drawArraysCount + drawElementsCount
+	if totalDraw > 0 {
+		if float64(drawArraysCount)/float64(totalDraw) > 0.95 {
+			sceneHint = "2d"
+		} else if float64(drawElementsCount)/float64(totalDraw) > 0.3 {
+			sceneHint = "3d"
+		} else {
+			sceneHint = "mixed"
+		}
+	}
+
+	switch {
+	case gapPct > 70:
+		return &CaseBottleneck{
+			Type:       "cpu_blocked_io",
+			Confidence: "high",
+			Evidence:   fmt.Sprintf("Average gap is %.0f%% of frame time (API only %.0f%%). Non-GL operations dominate.", gapPct, apiPct),
+			SceneHint:  sceneHint,
+		}
+	case apiPct > 60:
+		return &CaseBottleneck{
+			Type:       "cpu_bound_draw",
+			Confidence: "high",
+			Evidence:   fmt.Sprintf("API calls consume %.0f%% of frame time. Draw call/state overhead is the bottleneck.", apiPct),
+			SceneHint:  sceneHint,
+		}
+	case gapPct < 30 && apiPct < 30:
+		return &CaseBottleneck{
+			Type:       "gpu_bound",
+			Confidence: "medium",
+			Evidence:   fmt.Sprintf("Neither API (%.0f%%) nor gap (%.0f%%) dominates. GPU may be the bottleneck.", apiPct, gapPct),
+			SceneHint:  sceneHint,
+		}
+	default:
+		return &CaseBottleneck{
+			Type:       "mixed",
+			Confidence: "medium",
+			Evidence:   fmt.Sprintf("Multiple factors: API=%.0f%%, gap=%.0f%%.", apiPct, gapPct),
+			SceneHint:  sceneHint,
+		}
+	}
+}
+
+func detectPerfSignals(frame core.FrameInfo, apiCounters []APICounter, drawCount int) []PerfSignal {
+	var signals []PerfSignal
+
+	findCounter := func(name string) (APICounter, bool) {
+		for _, c := range apiCounters {
+			if c.APIName == name {
+				return c, true
+			}
+		}
+		return APICounter{}, false
+	}
+
+	findFamilyCount := func(family string) (count int, timeUs int64) {
+		for _, c := range apiCounters {
+			if c.Family == family {
+				count += c.Count
+				timeUs += c.TimeUs
+			}
+		}
+		return
+	}
+
+	if dc, ok := findCounter("glDrawArrays"); ok && dc.Count > 1000 && drawCount > 0 {
+		signals = append(signals, PerfSignal{
+			Signal:   "unbatched_draws",
+			Severity: "high",
+			Detail:   fmt.Sprintf("%d glDrawArrays calls (%d total draws) — likely small batches", dc.Count, drawCount),
+		})
+	}
+
+	instancedCount, _ := findFamilyCount("draw_arrays_variant")
+	if instancedCount == 0 && drawCount > 5000 {
+		signals = append(signals, PerfSignal{
+			Signal:   "no_instancing",
+			Severity: "high",
+			Detail:   fmt.Sprintf("%d draw calls with 0 instanced draws — major optimization opportunity", drawCount),
+		})
+	}
+
+	if rb, ok := findCounter("glReadPixels"); ok {
+		severity := "medium"
+		if rb.TimeUs > 50000 || rb.Count > 5 {
+			severity = "high"
+		}
+		signals = append(signals, PerfSignal{
+			Signal:   "readback_stall",
+			Severity: severity,
+			Detail:   fmt.Sprintf("%d glReadPixels calls (%.1fms total) — CPU-GPU sync stall", rb.Count, float64(rb.TimeUs)/1000),
+		})
+	}
+
+	if del, ok := findCounter("glDeleteTextures"); ok && del.Count > 5 {
+		signals = append(signals, PerfSignal{
+			Signal:   "resource_churn",
+			Severity: "medium",
+			Detail:   fmt.Sprintf("%d glDeleteTextures per frame — consider texture pooling", del.Count),
+		})
+	}
+
+	if vap, ok := findCounter("glVertexAttribPointer"); ok && drawCount > 0 {
+		ratio := float64(vap.Count) / float64(drawCount)
+		if ratio > 1.5 {
+			signals = append(signals, PerfSignal{
+				Signal:   "no_vao",
+				Severity: "high",
+				Detail:   fmt.Sprintf("%d glVertexAttribPointer calls (%.1fx draw count) — not using VAO", vap.Count, ratio),
+			})
+		}
+	}
+
+	if pu, ok := findCounter("glUseProgram"); ok && drawCount > 0 {
+		switchRatio := float64(pu.Count) / float64(drawCount)
+		if switchRatio > 0.2 && pu.Count > 50 {
+			signals = append(signals, PerfSignal{
+				Signal:   "frequent_shader_switch",
+				Severity: "medium",
+				Detail:   fmt.Sprintf("%d glUseProgram switches for %d draws", pu.Count, drawCount),
+			})
+		}
+	}
+
+	if syncCount, syncTime := findFamilyCount("sync"); syncCount > 0 && syncTime > 5000 {
+		signals = append(signals, PerfSignal{
+			Signal:   "sync_stall",
+			Severity: "high",
+			Detail:   fmt.Sprintf("Sync operations took %.1fms — GPU pipeline stall", float64(syncTime)/1000),
+		})
+	}
+
+	uniformCount, _ := findFamilyCount("uniform_update")
+	bindCount, _ := findFamilyCount("buffer_binding")
+	textureBindCount, _ := findFamilyCount("texture_state")
+	stateTotal := uniformCount + bindCount + textureBindCount
+	if drawCount > 0 && float64(stateTotal)/float64(drawCount) > 10 {
+		signals = append(signals, PerfSignal{
+			Signal:   "state_overhead",
+			Severity: "medium",
+			Detail:   fmt.Sprintf("%d state changes for %d draws (%.1fx ratio)", stateTotal, drawCount, float64(stateTotal)/float64(drawCount)),
+		})
+	}
+
+	return signals
 }
 
 func frameAPICounters(frame core.FrameInfo) []APICounter {

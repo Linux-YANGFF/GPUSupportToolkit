@@ -293,19 +293,34 @@ export interface OverviewResult {
 }
 
 export interface FrameSummaryResponse {
+  id?: number
   frame_num: number
+  FrameNum?: number
   start_line: number
+  StartLine?: number
   end_line: number
+  EndLine?: number
   total_time_us: number
+  TotalTimeUs?: number
   swap_buffer_time_us: number
+  SwapBufferTimeUs?: number
   api_total_time_us: number
+  APITotalTimeUs?: number
   api_count: number
+  APICount?: number
+  APICallCount?: number
   draw_call_count: number
+  DrawCallCount?: number
   has_timing: boolean
+  HasTiming?: boolean
   timing_source: string
+  TimingSource?: string
   stats_source?: string
+  StatsSource?: string
   category_stats?: CategoryCounter[]
+  CategoryStats?: CategoryCounter[]
   key_apis?: ApiCounter[]
+  KeyAPIs?: ApiCounter[]
 }
 
 export interface DrawCallStats {

@@ -1,8 +1,8 @@
 package parser
 
 import (
-	"io"
 	"gst/internal/core"
+	"io"
 )
 
 // ProfileParser Profile日志解析器

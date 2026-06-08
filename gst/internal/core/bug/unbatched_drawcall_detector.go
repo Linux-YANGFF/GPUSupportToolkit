@@ -30,7 +30,7 @@ func (d *UnbatchedDrawCallDetector) analyzeFrame(frame *core.FrameInfo) *core.Fi
 	// 检测连续的 glDrawArrays(mode, 0, N) 其中 N 很小（如 2）
 	const (
 		smallVertexThreshold = 6  // 小于此值认为是小批量
-		consecutiveThreshold = 50  // 连续超过此数量才报告
+		consecutiveThreshold = 50 // 连续超过此数量才报告
 	)
 
 	var (

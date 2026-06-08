@@ -1,6 +1,8 @@
 package bug
 
 import (
+	"fmt"
+	"hash/fnv"
 	"strings"
 	"time"
 
@@ -8,6 +10,7 @@ import (
 )
 
 func GenerateReport(sourceFile string, findings []core.Finding) *core.DiagnosisReport {
+	findings = normalizeFindings(findings)
 	summary := core.DiagnosisSummary{
 		TotalFindings: len(findings),
 	}
@@ -28,14 +31,16 @@ func GenerateReport(sourceFile string, findings []core.Finding) *core.DiagnosisR
 	}
 
 	return &core.DiagnosisReport{
-		SourceFile:  sourceFile,
-		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
-		Summary:     summary,
-		Findings:    findings,
+		SchemaVersion: core.DiagnosisSchemaVersion,
+		SourceFile:    sourceFile,
+		GeneratedAt:   time.Now().UTC().Format(time.RFC3339),
+		Summary:       summary,
+		Findings:      findings,
 	}
 }
 
 func GenerateMarkdownReport(findings []core.Finding, sourceFile string) string {
+	findings = normalizeFindings(findings)
 	bySeverity := groupBySeverity(findings)
 
 	var b strings.Builder
@@ -173,6 +178,133 @@ func groupBySeverity(findings []core.Finding) map[core.Severity][]core.Finding {
 
 func countSeverity(groups map[core.Severity][]core.Finding, sev core.Severity) int {
 	return len(groups[sev])
+}
+
+func normalizeFindings(findings []core.Finding) []core.Finding {
+	if len(findings) == 0 {
+		return []core.Finding{}
+	}
+	normalized := make([]core.Finding, 0, len(findings))
+	for i, finding := range findings {
+		normalized = append(normalized, normalizeFinding(finding, i))
+	}
+	return normalized
+}
+
+func normalizeFinding(f core.Finding, index int) core.Finding {
+	f.Severity = normalizeSeverity(f.Severity)
+	f.SeverityRank = severityRank(f.Severity)
+	f.Category = normalizeCategory(f.Category)
+	if f.CategoryLabel == "" {
+		f.CategoryLabel = categoryLabel(f.Category)
+	}
+	if f.Kind == "" {
+		f.Kind = inferFindingKind(f.Category, f.Severity)
+	}
+	if f.Confidence == "" {
+		f.Confidence = core.ConfidenceMedium
+	}
+	if f.RootCauseChain == nil {
+		f.RootCauseChain = []string{}
+	}
+	if f.ID == "" {
+		f.ID = stableFindingID(f, index)
+	}
+	return f
+}
+
+func normalizeSeverity(severity core.Severity) core.Severity {
+	switch severity {
+	case core.SeverityCritical, core.SeverityHigh, core.SeverityMedium, core.SeverityLow, core.SeverityInfo:
+		return severity
+	default:
+		return core.SeverityInfo
+	}
+}
+
+func severityRank(severity core.Severity) int {
+	switch severity {
+	case core.SeverityCritical:
+		return 1
+	case core.SeverityHigh:
+		return 2
+	case core.SeverityMedium:
+		return 3
+	case core.SeverityLow:
+		return 4
+	default:
+		return 5
+	}
+}
+
+func normalizeCategory(category string) string {
+	category = strings.TrimSpace(strings.ToLower(category))
+	if category == "" {
+		return "general"
+	}
+	return strings.ReplaceAll(category, "-", "_")
+}
+
+func categoryLabel(category string) string {
+	switch category {
+	case "driver_error":
+		return "Driver Error"
+	case "null_pointer":
+		return "Null Pointer"
+	case "resource_leak":
+		return "Resource Leak"
+	case "shader_error":
+		return "Shader Error"
+	case "antipattern":
+		return "API Anti-Pattern"
+	case "perf_anomaly", "performance":
+		return "Performance"
+	case "thread_safety":
+		return "Thread Safety"
+	case "cross_context_resource":
+		return "Cross-Context Resource"
+	case "unbatched_drawcall":
+		return "Unbatched Draw Call"
+	case "general":
+		return "General"
+	default:
+		parts := strings.Split(category, "_")
+		for i, part := range parts {
+			if part == "" {
+				continue
+			}
+			parts[i] = strings.ToUpper(part[:1]) + part[1:]
+		}
+		return strings.Join(parts, " ")
+	}
+}
+
+func inferFindingKind(category string, severity core.Severity) core.FindingKind {
+	switch category {
+	case "performance", "perf_anomaly", "unbatched_drawcall", "antipattern":
+		return core.FindingKindPerformance
+	case "general":
+		if severity == core.SeverityInfo {
+			return core.FindingKindInfo
+		}
+		return core.FindingKindBug
+	default:
+		return core.FindingKindBug
+	}
+}
+
+func stableFindingID(f core.Finding, index int) string {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(string(f.Severity)))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(f.Category))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(f.Description))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(f.Evidence))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(fmt.Sprintf("%d", index)))
+	return fmt.Sprintf("finding-%08x", h.Sum32())
 }
 
 func NewDefaultRegistry() *Registry {

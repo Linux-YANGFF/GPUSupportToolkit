@@ -1,4 +1,4 @@
-.PHONY: dev build build-cli build-server build-web build-all test lint clean help deb deb-amd64 deb-arm64 rpm rpm-amd64 rpm-arm64 package package-all
+.PHONY: dev build build-cli build-server build-web build-all test test-core test-web check-web check-all lint clean help deb deb-amd64 deb-arm64 rpm rpm-amd64 rpm-arm64 package package-all
 
 # Go parameters
 GOCMD ?= $(or $(wildcard /usr/local/go/bin/go),go)
@@ -25,6 +25,7 @@ WEB_DIST = web/dist
 # Source directories
 SERVER_CMD = ./cmd/gst-server
 CLI_CMD = ./cmd/cli
+GO_SOURCES := $(shell find cmd internal -name '*.go')
 
 # Architecture support
 ARCH ?= $(shell uname -m)
@@ -54,6 +55,8 @@ help:
 	@echo "  make build-all    Build web assets, gst-server, and gst-cli"
 	@echo "  make test         Run all tests"
 	@echo "  make test-core    Run core module tests only"
+	@echo "  make test-web     Run web TypeScript checks"
+	@echo "  make check-all    Run Go tests, vet, and web TypeScript checks"
 	@echo "  make lint         Run code linting"
 	@echo "  make fmt          Format code"
 	@echo "  make vet          Run go vet"
@@ -85,7 +88,7 @@ build: build-server
 
 build-server: $(SERVER_BINARY_PATH)
 
-$(SERVER_BINARY_PATH): $(SERVER_CMD)/*.go
+$(SERVER_BINARY_PATH): $(GO_SOURCES)
 	@echo "Building gst-server binary..."
 	GOCACHE=$(GOCACHE) CGO_ENABLED=0 $(GOBUILD) -o $(SERVER_BINARY_PATH) $(SERVER_CMD)
 	@echo "Server binary built: $(SERVER_BINARY_PATH)"
@@ -93,7 +96,7 @@ $(SERVER_BINARY_PATH): $(SERVER_CMD)/*.go
 # Build CLI binary
 build-cli: $(CLI_BINARY_PATH)
 
-$(CLI_BINARY_PATH): $(CLI_CMD)/*.go
+$(CLI_BINARY_PATH): $(GO_SOURCES)
 	@echo "Building CLI binary..."
 	GOCACHE=$(GOCACHE) CGO_ENABLED=0 $(GOBUILD) -o $(CLI_BINARY_PATH) $(CLI_CMD)
 	@echo "CLI binary built: $(CLI_BINARY_PATH)"
@@ -123,6 +126,16 @@ test:
 test-core:
 	@echo "Running core module tests..."
 	GOCACHE=$(GOCACHE) $(GOTEST) -v ./internal/core/...
+
+# Run web TypeScript checks without producing dist assets
+test-web:
+	@echo "Running web TypeScript checks..."
+	$(NPM) --prefix web run typecheck
+
+check-web: test-web
+
+check-all: test vet test-web
+	@echo "All verification checks passed"
 
 # Run tests with coverage
 test-cover:
@@ -190,22 +203,27 @@ VERSION ?= $(shell cat VERSION 2>/dev/null || git describe --tags --abbrev=0 2>/
 
 define stage_package
 	rm -rf bin/pkg-$(1) && \
-	mkdir -p bin/pkg-$(1)/usr/bin bin/pkg-$(1)/usr/share/applications bin/pkg-$(1)/usr/share/gst/web bin/pkg-$(1)/DEBIAN bin/pkg-$(1)/var/lib/gst && \
+	mkdir -p bin/pkg-$(1)/usr/bin bin/pkg-$(1)/usr/share/applications bin/pkg-$(1)/usr/share/icons/hicolor/scalable/apps bin/pkg-$(1)/usr/share/gst/web bin/pkg-$(1)/DEBIAN bin/pkg-$(1)/var/lib/gst && \
 	cp bin/$(SERVER_BINARY)-linux-$(1) bin/pkg-$(1)/usr/bin/$(SERVER_BINARY) && \
 	cp bin/$(CLI_BINARY)-linux-$(1) bin/pkg-$(1)/usr/bin/$(INSTALL_CLI) && \
+	ln -s $(INSTALL_CLI) bin/pkg-$(1)/usr/bin/$(CLI_BINARY) && \
+	cp packaging/scripts/gst-ui bin/pkg-$(1)/usr/bin/gst-ui && \
+	cp packaging/scripts/gst-create-desktop-shortcut bin/pkg-$(1)/usr/bin/gst-create-desktop-shortcut && \
 	cp -r $(WEB_DIST)/* bin/pkg-$(1)/usr/share/gst/web/ && \
 	cp packaging/deb/DEBIAN/postinst bin/pkg-$(1)/DEBIAN/postinst && \
 	cp packaging/deb/DEBIAN/prerm bin/pkg-$(1)/DEBIAN/prerm && \
+	cp packaging/deb/DEBIAN/postrm bin/pkg-$(1)/DEBIAN/postrm && \
 	cp packaging/deb/usr/share/applications/* bin/pkg-$(1)/usr/share/applications/ && \
-	chmod 755 bin/pkg-$(1)/DEBIAN/postinst bin/pkg-$(1)/DEBIAN/prerm
+	cp packaging/deb/usr/share/icons/hicolor/scalable/apps/* bin/pkg-$(1)/usr/share/icons/hicolor/scalable/apps/ && \
+	chmod 755 bin/pkg-$(1)/DEBIAN/postinst bin/pkg-$(1)/DEBIAN/prerm bin/pkg-$(1)/DEBIAN/postrm bin/pkg-$(1)/usr/bin/gst-ui bin/pkg-$(1)/usr/bin/gst-create-desktop-shortcut
 endef
 
-bin/$(SERVER_BINARY)-linux-%: $(SERVER_CMD)/*.go
+bin/$(SERVER_BINARY)-linux-%: $(GO_SOURCES)
 	@echo "Cross-compiling gst-server for Linux $*..."
 	@mkdir -p bin
 	GOCACHE=$(GOCACHE) CGO_ENABLED=0 GOOS=linux GOARCH=$* $(GOBUILD) -o $@ $(SERVER_CMD)
 
-bin/$(CLI_BINARY)-linux-%: $(CLI_CMD)/*.go
+bin/$(CLI_BINARY)-linux-%: $(GO_SOURCES)
 	@echo "Cross-compiling gst-cli for Linux $*..."
 	@mkdir -p bin
 	GOCACHE=$(GOCACHE) CGO_ENABLED=0 GOOS=linux GOARCH=$* $(GOBUILD) -o $@ $(CLI_CMD)
@@ -214,7 +232,7 @@ deb: PACKAGE_ARCH := $(PACKAGE_ARCH)
 deb: build-web bin/$(SERVER_BINARY)-linux-$(PACKAGE_ARCH) bin/$(CLI_BINARY)-linux-$(PACKAGE_ARCH)
 	@echo "Building deb package (version $(VERSION), arch $(PACKAGE_ARCH))..."
 	@$(call stage_package,$(PACKAGE_ARCH))
-	@printf "Package: gst\nVersion: $(VERSION)\nSection: utils\nPriority: optional\nArchitecture: $(PACKAGE_ARCH)\nDepends: libc6\nMaintainer: GST Team\nDescription: GPU Support Toolkit - GPU log analysis tool\n A tool for analyzing apitrace/profile/rawtrace logs.\n" > bin/pkg-$(PACKAGE_ARCH)/DEBIAN/control
+	@printf "Package: gst\nVersion: $(VERSION)\nSection: utils\nPriority: optional\nArchitecture: $(PACKAGE_ARCH)\nDepends: libc6\nRecommends: xdg-utils\nMaintainer: GST Team\nDescription: GPU Support Toolkit - GPU log analysis tool\n A tool for analyzing apitrace/profile/rawtrace logs.\n" > bin/pkg-$(PACKAGE_ARCH)/DEBIAN/control
 	dpkg-deb --build bin/pkg-$(PACKAGE_ARCH) bin/gst-$(VERSION)-$(PACKAGE_ARCH).deb
 	@echo "Deb package built: bin/gst-$(VERSION)-$(PACKAGE_ARCH).deb"
 

@@ -128,10 +128,10 @@ func (d *ThreadSafetyDetector) buildSwitchFinding(call *core.APILogEntry, gcAddr
 		call.APIName, call.LineNum, gcAddr, tid, prevTID, call.RawParams,
 	)
 	return core.Finding{
-		Severity: core.SeverityHigh,
-		Category: "thread_safety",
-		Description:    desc,
-		Evidence:       evidence,
+		Severity:    core.SeverityHigh,
+		Category:    "thread_safety",
+		Description: desc,
+		Evidence:    evidence,
 		RootCauseChain: []string{
 			"Multiple threads accessing the same GL context without proper unbind",
 			"OpenGL contexts are not thread-safe: only one thread may use a context at a time",

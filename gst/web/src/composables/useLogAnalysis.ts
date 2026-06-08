@@ -1,6 +1,8 @@
 import { ref, computed } from 'vue'
 import type {
   BottleneckAnalysis,
+  ApiCounter,
+  CategoryCounter,
   DrawCallSummary,
   DrawCallInsight,
   FrameDrawCallPage,
@@ -662,15 +664,55 @@ export function useLogAnalysis() {
   }
 }
 
+function firstNumber(source: Record<string, unknown>, keys: string[], fallback = 0): number {
+  for (const key of keys) {
+    const value = source[key]
+    if (typeof value === 'number' && Number.isFinite(value)) return value
+    if (typeof value === 'string' && value.trim() !== '') {
+      const parsed = Number(value)
+      if (Number.isFinite(parsed)) return parsed
+    }
+  }
+  return fallback
+}
+
+function firstBoolean(source: Record<string, unknown>, keys: string[], fallback = false): boolean {
+  for (const key of keys) {
+    const value = source[key]
+    if (typeof value === 'boolean') return value
+  }
+  return fallback
+}
+
+function firstString(source: Record<string, unknown>, keys: string[], fallback = ''): string {
+  for (const key of keys) {
+    const value = source[key]
+    if (typeof value === 'string' && value !== '') return value
+  }
+  return fallback
+}
+
+function firstArray<T>(source: Record<string, unknown>, keys: string[]): T[] {
+  for (const key of keys) {
+    const value = source[key]
+    if (Array.isArray(value)) return value as T[]
+  }
+  return []
+}
+
 function mapFrameData(f: FrameSummaryResponse): FrameData {
-  const totalTimeUs = f.total_time_us ?? 0
-  const swapTimeUs = f.swap_buffer_time_us ?? 0
-  const apiTimeUs = f.api_total_time_us ?? 0
+  const source = f as unknown as Record<string, unknown>
+  const frameNum = firstNumber(source, ['frame_num', 'FrameNum', 'id', 'ID'], -1)
+  const totalTimeUs = firstNumber(source, ['total_time_us', 'TotalTimeUs'])
+  const swapTimeUs = firstNumber(source, ['swap_buffer_time_us', 'SwapBufferTimeUs'])
+  const apiTimeUs = firstNumber(source, ['api_total_time_us', 'APITotalTimeUs'])
   const otherTimeUs = Math.max(0, totalTimeUs - swapTimeUs - apiTimeUs)
+  const hasTiming = firstBoolean(source, ['has_timing', 'HasTiming'], totalTimeUs > 0)
+  const statsSource = firstString(source, ['stats_source', 'StatsSource'])
   return {
-    id: f.frame_num,
-    start_line: f.start_line,
-    end_line: f.end_line,
+    id: frameNum,
+    start_line: firstNumber(source, ['start_line', 'StartLine']),
+    end_line: firstNumber(source, ['end_line', 'EndLine']),
     duration_us: totalTimeUs,
     duration_ms: totalTimeUs / 1000,
     swap_buffer_time_us: swapTimeUs,
@@ -678,13 +720,13 @@ function mapFrameData(f: FrameSummaryResponse): FrameData {
     api_total_time_us: apiTimeUs,
     api_ms: apiTimeUs > 0 ? apiTimeUs / 1000 : null,
     other_ms: otherTimeUs > 0 ? otherTimeUs / 1000 : null,
-    api_count: f.api_count ?? 0,
-    draw_call_count: f.draw_call_count ?? 0,
-    has_timing: Boolean(f.has_timing ?? totalTimeUs > 0),
-    timing_source: f.timing_source || (totalTimeUs > 0 ? 'profile' : 'none'),
-    stats_source: f.stats_source,
-    category_stats: f.category_stats ?? [],
-    key_apis: f.key_apis ?? [],
+    api_count: firstNumber(source, ['api_count', 'APICount', 'api_call_count', 'APICallCount']),
+    draw_call_count: firstNumber(source, ['draw_call_count', 'DrawCallCount']),
+    has_timing: hasTiming,
+    timing_source: firstString(source, ['timing_source', 'TimingSource'], totalTimeUs > 0 ? 'profile' : 'none'),
+    stats_source: statsSource || undefined,
+    category_stats: firstArray<CategoryCounter>(source, ['category_stats', 'CategoryStats']),
+    key_apis: firstArray<ApiCounter>(source, ['key_apis', 'KeyAPIs']),
   }
 }
 

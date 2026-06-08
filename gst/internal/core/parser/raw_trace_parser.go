@@ -11,10 +11,11 @@ import (
 
 // RawTraceParser handles raw apiTrace format where each line is an individual API call.
 // Example:
-//   glXSwapBuffers: dpy = 0x1c002a1400, drawable = 121634855
-//   glGenFramebuffers 1
-//   glBindBuffer 0x8892 498
-//   glBufferSubData 0x8892 0 8512 0x7fa1ba6970
+//
+//	glXSwapBuffers: dpy = 0x1c002a1400, drawable = 121634855
+//	glGenFramebuffers 1
+//	glBindBuffer 0x8892 498
+//	glBufferSubData 0x8892 0 8512 0x7fa1ba6970
 type RawTraceParser struct{}
 
 var (
@@ -453,9 +454,10 @@ func removeRawTraceLinePrefix(line string) string {
 
 // parseAPICall extracts the API name and parameters from a raw trace line
 // Examples:
-//   "[  4090] glXSwapBuffers: dpy = 0x1c002a1400, drawable = 121634855" -> "glXSwapBuffers", "dpy = 0x1c002a1400, drawable = 121634855"
-//   "[     1] glGenFramebuffers 1" -> "glGenFramebuffers", "1"
-//   "glBindBuffer 0x8892 498" -> "glBindBuffer", "0x8892 498"
+//
+//	"[  4090] glXSwapBuffers: dpy = 0x1c002a1400, drawable = 121634855" -> "glXSwapBuffers", "dpy = 0x1c002a1400, drawable = 121634855"
+//	"[     1] glGenFramebuffers 1" -> "glGenFramebuffers", "1"
+//	"glBindBuffer 0x8892 498" -> "glBindBuffer", "0x8892 498"
 func parseAPICall(line string) (string, string) {
 	line = strings.TrimSpace(line)
 	if line == "" {

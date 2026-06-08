@@ -11,9 +11,11 @@ refresh_caches() {
 }
 
 case "$1" in
-    configure)
-        mkdir -p /var/lib/gst
-        chmod 755 /var/lib/gst
+    remove|purge)
+        rm -f /var/run/gst-server.pid /run/gst-server.pid
+        if [ -d /var/lib/gst ] && ! find /var/lib/gst -mindepth 1 -print -quit | grep -q .; then
+            rmdir /var/lib/gst 2>/dev/null || true
+        fi
         refresh_caches
         ;;
 esac

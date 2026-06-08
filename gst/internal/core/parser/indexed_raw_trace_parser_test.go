@@ -114,3 +114,38 @@ func TestParseIndexedRawTraceFile_FrameCostIsSourceOfTruth(t *testing.T) {
 		t.Fatalf("download leaked next frame: %q", downloadText)
 	}
 }
+
+func TestHydrateIndexedAPICalls_LoadsCallsForDiagnosis(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "diagnosis.log")
+	logText := strings.Join([]string{
+		"[    1] (gc=0x1, tid=0x1): glBindBuffer 0x8892 0",
+		"[    2] (gc=0x1, tid=0x1): glVertexAttribPointer 0 3 0x1406 0 0 (nil)",
+		"[    3] glXSwapBuffers: dpy = 0x1, drawable = 1",
+		"[    4] 0 frame cost 16ms",
+		"",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(logText), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	parsed, err := ParseIndexedRawTraceFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(parsed.Frames[0].APICalls); got != 0 {
+		t.Fatalf("indexed parser should not retain calls before hydration, got %d", got)
+	}
+
+	if err := HydrateIndexedAPICalls(parsed); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := len(parsed.Frames[0].APICalls); got != 2 {
+		t.Fatalf("hydrated calls = %d, want 2", got)
+	}
+	call := parsed.Frames[0].APICalls[1]
+	if call.APIName != "glVertexAttribPointer" || !call.HasNilPtr || call.GCAddr != "0x1" {
+		t.Fatalf("unexpected hydrated call: %#v", call)
+	}
+}
